@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Node.js / NPM / Yarn
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Next.js Build
+frontend/.next/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Expo & React Native
+mobile/.expo/
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Development & Scratch Files
+scratch/
+training_log.txt
+*.log
+*.tmp
+temp/
+tmp/
+*.bat
+*.ps1
+*.cmd
+vocxguard_demo.html
+
+# Datasets & Heavy Audio Dumps (Downloadable via scripts)
+ml/data/
+data/
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.webm
+*.ogg
+
+# Checkpoint backups & redundant large weights (keep canonical *_best.pt)
+checkpoints/*_final.pt
+checkpoints/*_new.pt
+checkpoints/*.bak
+
+# OS Metadata & IDE
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment Variables & Secrets
+.env
+.env*.local

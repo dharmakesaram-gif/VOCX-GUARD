@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0a1a;
+  --foreground: #ffffff;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Inter', sans-serif;
+}
+
+.glassmorphism {
+  background: rgba(26, 26, 46, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+}
+
+.glow-effect {
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+}
+
+.glow-effect-danger {
+  box-shadow: 0 0 15px rgba(255, 59, 59, 0.5);
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 212, 255, 0); }
+  100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); }
+}
+
+.animated-ring {
+  animation: pulse-ring 2s infinite;
+}

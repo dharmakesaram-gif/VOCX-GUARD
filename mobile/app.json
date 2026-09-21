@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Vocx Guard",
+    "slug": "vocxguard",
+    "scheme": "vocxguard",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "splash": {
+      "backgroundColor": "#0a0a1a"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.DETECT_SCREEN_CAPTURE"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a1a"
+      }
+    },
+    "plugins": ["expo-av"]
+  }
+}
