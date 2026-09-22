@@ -21,9 +21,11 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
-# Next.js Build
+# Next.js Build & Vercel
 frontend/.next/
 .next/
+.vercel/
+frontend/.vercel/
 out/
 build/
 dist/
