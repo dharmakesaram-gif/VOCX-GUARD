@@ -1,7 +1,11 @@
+import * as FileSystem from 'expo-file-system';
+
 // Production / Development Backend API Base URL
 // When deploying or running on physical device, set EXPO_PUBLIC_API_URL in .env
 const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 const TIMEOUT_MS = 5000; // 5 seconds timeout for resilience against Wi-Fi drops or firewall blocks
+
+const HISTORY_FILE = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}vocxguard_history.json` : null;
 
 export interface Speaker {
   id: string;
@@ -164,21 +168,46 @@ function addSpeakerToCache(speakerNameOrId: string) {
   }
 }
 
-function cacheSessionFromAnalysis(analysis: AnalyzeResult, speakerId?: string) {
+async function loadPersistedSessions(): Promise<Session[]> {
+  if (!HISTORY_FILE) return [];
+  try {
+    const info = await FileSystem.getInfoAsync(HISTORY_FILE);
+    if (info.exists) {
+      const data = await FileSystem.readAsStringAsync(HISTORY_FILE);
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn('Could not read persisted sessions:', err);
+  }
+  return [];
+}
+
+async function persistSessionsToDisk(sessions: Session[]): Promise<void> {
+  if (!HISTORY_FILE) return;
+  try {
+    await FileSystem.writeAsStringAsync(HISTORY_FILE, JSON.stringify(sessions));
+  } catch (err) {
+    console.warn('Could not save persisted sessions to disk:', err);
+  }
+}
+
+async function cacheSessionFromAnalysis(analysis: AnalyzeResult, speakerId?: string) {
+  const normScore = analysis.score ?? (analysis.risk_score > 1 ? analysis.risk_score / 100 : analysis.risk_score);
   const newSession: Session = {
     id: analysis.session_id,
     session_id: analysis.session_id,
-    timestamp: analysis.timestamp,
-    start_time: analysis.timestamp,
-    speakerId: speakerId || 'Verified_Speaker',
-    speaker_id: speakerId || 'Verified_Speaker',
-    riskScore: analysis.score,
-    risk_score: analysis.risk_score,
-    current_risk: analysis.risk_score,
-    riskLevel: analysis.risk_level,
-    risk_level: analysis.risk_level,
+    timestamp: analysis.timestamp || new Date().toISOString(),
+    start_time: analysis.timestamp || new Date().toISOString(),
+    speakerId: speakerId || 'Snapshot Voice Analysis',
+    speaker_id: speakerId || 'Snapshot Voice Analysis',
+    riskScore: normScore,
+    risk_score: normScore > 1 ? normScore : normScore * 100,
+    current_risk: normScore > 1 ? normScore : normScore * 100,
+    riskLevel: analysis.risk_level || (normScore >= 0.70 ? 'HIGH' : normScore >= 0.30 ? 'MEDIUM' : 'LOW'),
+    risk_level: analysis.risk_level || (normScore >= 0.70 ? 'HIGH' : normScore >= 0.30 ? 'MEDIUM' : 'LOW'),
     chunks_analyzed: 1,
-    risk_history: [analysis.risk_score],
+    risk_history: [normScore * 100],
   };
 
   const existingIdx = fallbackSessions.findIndex(
@@ -189,6 +218,12 @@ function cacheSessionFromAnalysis(analysis: AnalyzeResult, speakerId?: string) {
   } else {
     fallbackSessions.unshift(newSession);
   }
+
+  try {
+    const onDisk = await loadPersistedSessions();
+    const updated = [newSession, ...onDisk.filter(s => s.id !== newSession.id && s.session_id !== newSession.session_id)].slice(0, 50);
+    await persistSessionsToDisk(updated);
+  } catch (_) {}
 }
 
 function createFallbackAnalysis(sessionId: string, speakerId?: string): AnalyzeResult {
@@ -472,75 +507,118 @@ export const api = {
     }
   },
 
+  recordCompletedSession: async (session: Session): Promise<void> => {
+    const existingIdx = fallbackSessions.findIndex(
+      s => s.id === session.id || s.session_id === session.session_id
+    );
+    if (existingIdx >= 0) {
+      fallbackSessions[existingIdx] = session;
+    } else {
+      fallbackSessions.unshift(session);
+    }
+
+    try {
+      const onDisk = await loadPersistedSessions();
+      const updated = [session, ...onDisk.filter(s => s.id !== session.id && s.session_id !== session.session_id)].slice(0, 50);
+      await persistSessionsToDisk(updated);
+    } catch (_) {}
+  },
+
   getSessions: async (): Promise<Session[]> => {
+    let localDiskSessions: Session[] = [];
+    try {
+      localDiskSessions = await loadPersistedSessions();
+    } catch (_) {}
+
+    // Combine local disk and memory fallback sessions
+    const combinedLocal: Session[] = [...fallbackSessions];
+    for (const d of localDiskSessions) {
+      if (!combinedLocal.some(s => s.id === d.id || s.session_id === d.session_id)) {
+        combinedLocal.push(d);
+      }
+    }
+
     try {
       const response = await fetchWithTimeout(`${API_BASE}/api/sessions`, {}, TIMEOUT_MS);
-      if (!response.ok) {
-        throw new Error(`Sessions fetch failed with HTTP ${response.status}`);
-      }
-      const data = await response.json();
-      const rawList = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.sessions)
-        ? data.sessions
-        : [];
+      if (response.ok) {
+        const data = await response.json();
+        const rawList = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.sessions)
+          ? data.sessions
+          : [];
 
-      if (rawList.length > 0) {
-        const serverSessions: Session[] = rawList.map((item: any, idx: number) => {
-          const rawRisk =
-            typeof item.current_risk === 'number'
-              ? item.current_risk
-              : typeof item.risk_score === 'number'
-              ? item.risk_score
-              : typeof item.riskScore === 'number'
-              ? item.riskScore
-              : 15.0;
-          const normScore = rawRisk > 1 ? rawRisk / 100 : rawRisk;
-          const level: 'LOW' | 'MEDIUM' | 'HIGH' = item.risk_level
-            ? (item.risk_level.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH')
-            : item.riskLevel
-            ? (item.riskLevel.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH')
-            : normScore > 0.7
-            ? 'HIGH'
-            : normScore > 0.3
-            ? 'MEDIUM'
-            : 'LOW';
+        if (rawList.length > 0) {
+          const serverSessions: Session[] = rawList.map((item: any, idx: number) => {
+            const rawRisk =
+              typeof item.current_risk === 'number'
+                ? item.current_risk
+                : typeof item.risk_score === 'number'
+                ? item.risk_score
+                : typeof item.riskScore === 'number'
+                ? item.riskScore
+                : 15.0;
+            const normScore = rawRisk > 1 ? rawRisk / 100 : rawRisk;
+            const level: 'LOW' | 'MEDIUM' | 'HIGH' = item.risk_level
+              ? (item.risk_level.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH')
+              : item.riskLevel
+              ? (item.riskLevel.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH')
+              : normScore >= 0.70
+              ? 'HIGH'
+              : normScore >= 0.30
+              ? 'MEDIUM'
+              : 'LOW';
 
-          return {
-            id: item.session_id || item.id || `sess_${idx + 1}`,
-            session_id: item.session_id || item.id || `sess_${idx + 1}`,
-            timestamp: item.start_time || item.timestamp || new Date().toISOString(),
-            start_time: item.start_time || item.timestamp || new Date().toISOString(),
-            speakerId: item.speaker_id || item.speakerId || 'Enrolled_User',
-            speaker_id: item.speaker_id || item.speakerId || 'Enrolled_User',
-            riskScore: normScore,
-            risk_score: rawRisk > 1 ? rawRisk : rawRisk * 100,
-            current_risk: rawRisk > 1 ? rawRisk : rawRisk * 100,
-            riskLevel: level,
-            risk_level: level,
-            chunks_analyzed: item.chunks_analyzed || 1,
-            risk_history: Array.isArray(item.risk_history) ? item.risk_history : [rawRisk],
-          };
-        });
+            return {
+              id: item.session_id || item.id || `sess_${idx + 1}`,
+              session_id: item.session_id || item.id || `sess_${idx + 1}`,
+              timestamp: item.start_time || item.timestamp || new Date().toISOString(),
+              start_time: item.start_time || item.timestamp || new Date().toISOString(),
+              speakerId: item.speaker_id || item.speakerId || 'Live Session',
+              speaker_id: item.speaker_id || item.speakerId || 'Live Session',
+              riskScore: normScore,
+              risk_score: rawRisk > 1 ? rawRisk : rawRisk * 100,
+              current_risk: rawRisk > 1 ? rawRisk : rawRisk * 100,
+              riskLevel: level,
+              risk_level: level,
+              chunks_analyzed: item.chunks_analyzed || 1,
+              risk_history: Array.isArray(item.risk_history) ? item.risk_history : [rawRisk],
+            };
+          });
 
-        // Merge local sessions
-        for (const local of fallbackSessions) {
-          if (!serverSessions.some(s => s.id === local.id || s.session_id === local.session_id)) {
-            serverSessions.unshift(local);
+          // Merge local sessions
+          for (const local of combinedLocal) {
+            if (!serverSessions.some(s => s.id === local.id || s.session_id === local.session_id)) {
+              serverSessions.unshift(local);
+            }
           }
-        }
-        return serverSessions;
-      }
 
-      return [...fallbackSessions];
+          // Sort newest first
+          serverSessions.sort((a, b) => {
+            const timeA = new Date(a.timestamp || a.start_time || 0).getTime();
+            const timeB = new Date(b.timestamp || b.start_time || 0).getTime();
+            return timeB - timeA;
+          });
+
+          return serverSessions;
+        }
+      }
     } catch (error) {
       console.warn(
         `[API] getSessions unreachable (${
           error instanceof Error ? error.message : String(error)
-        }). Using resilient fallback history.`
+        }). Using combined local history.`
       );
-      return [...fallbackSessions];
     }
+
+    // Sort combined local sessions newest first
+    combinedLocal.sort((a, b) => {
+      const timeA = new Date(a.timestamp || a.start_time || 0).getTime();
+      const timeB = new Date(b.timestamp || b.start_time || 0).getTime();
+      return timeB - timeA;
+    });
+
+    return combinedLocal;
   },
 
   getEnrolledSpeakers: async (): Promise<Speaker[]> => {

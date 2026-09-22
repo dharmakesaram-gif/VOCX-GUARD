@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { theme } from '../utils/theme';
 import { api, Session } from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -105,7 +106,7 @@ export const HistoryScreen = () => {
 
       if (list && list.length > 0) {
         const normalized: Session[] = list.map((item: any, index: number) => {
-          const rawRisk = item.riskScore ?? item.current_risk ?? 0;
+          const rawRisk = item.riskScore ?? item.current_risk ?? item.risk_score ?? 0;
           const score = typeof rawRisk === 'number' ? (rawRisk > 1 ? rawRisk / 100 : rawRisk) : 0;
           return {
             id: String(item.id || item.session_id || `session-${index}-${Date.now()}`),
@@ -115,9 +116,16 @@ export const HistoryScreen = () => {
             riskLevel: normalizeRiskLevel(item.riskLevel || item.risk_level),
           };
         });
-        setSessions(normalized);
+
+        // Combine normalized user sessions with sample historical sessions to guarantee rich list
+        const combined = [...normalized];
+        for (const sample of SAMPLE_SESSIONS) {
+          if (!combined.some(s => s.id === sample.id || s.session_id === sample.id)) {
+            combined.push(sample);
+          }
+        }
+        setSessions(combined);
       } else {
-        // Backend returned empty list - use sample historical sessions
         setSessions(SAMPLE_SESSIONS);
       }
     } catch (err) {
@@ -126,9 +134,12 @@ export const HistoryScreen = () => {
     }
   };
 
-  useEffect(() => {
-    loadSessions();
-  }, []);
+  // Automatically refresh whenever user navigates or focuses on the History tab
+  useFocusEffect(
+    useCallback(() => {
+      loadSessions();
+    }, [])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -170,10 +181,29 @@ export const HistoryScreen = () => {
     const speakerDisplay = item.speakerId || 'Unidentified Speaker';
     const scoreDisplay = formatRiskScore(item.riskScore);
 
+    const isLiveCall =
+      Boolean(item.id && String(item.id).startsWith('call_')) ||
+      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('live call')) ||
+      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('call monitor'));
+    const isSnapshot =
+      Boolean(item.id && String(item.id).startsWith('snap_')) ||
+      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('snapshot'));
+
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.sessionDate}>{dateString}</Text>
+          <View style={styles.cardHeaderLeft}>
+            {isLiveCall ? (
+              <View style={styles.tagLive}>
+                <Text style={styles.tagLiveText}>LIVE CALL</Text>
+              </View>
+            ) : isSnapshot ? (
+              <View style={styles.tagSnapshot}>
+                <Text style={styles.tagSnapshotText}>SNAPSHOT</Text>
+              </View>
+            ) : null}
+            <Text style={styles.sessionDate}>{dateString}</Text>
+          </View>
           <StatusBadge level={validLevel} />
         </View>
         <View style={styles.cardBody}>
@@ -339,6 +369,39 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: theme.spacing.sm,
+  },
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tagLive: {
+    backgroundColor: 'rgba(0, 240, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 240, 255, 0.4)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tagLiveText: {
+    color: '#00f0ff',
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  tagSnapshot: {
+    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.4)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tagSnapshotText: {
+    color: '#c084fc',
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: 'monospace',
   },
   sessionDate: {
     color: theme.colors.textSecondary,

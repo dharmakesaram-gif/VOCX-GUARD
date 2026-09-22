@@ -155,12 +155,10 @@ export default function AnalysisPage() {
     try {
       const payload: any = {
         audio_base64: audioBase64,
+        speaker_id: selectedSpeaker || (audioFileName ? `File: ${audioFileName.slice(0, 24)}` : 'Forensic Lab Audio'),
         filter_owner: filterMyVoice,
         owner_speaker_id: ownerSpeakerId,
       };
-      if (selectedSpeaker) {
-        payload.speaker_id = selectedSpeaker;
-      }
 
       const response = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',

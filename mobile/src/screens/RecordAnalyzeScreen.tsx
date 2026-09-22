@@ -16,7 +16,7 @@ import { WaveformBars } from '../components/WaveformBars';
 import { RiskGauge } from '../components/RiskGauge';
 import { StatusBadge } from '../components/StatusBadge';
 import { audioRecorder } from '../services/audioRecorder';
-import { api, AnalyzeResult } from '../services/api';
+import { api, AnalyzeResult, Session } from '../services/api';
 
 interface LiveChunkLog {
   id: string;
@@ -86,6 +86,11 @@ export const RecordAnalyzeScreen = () => {
   const peakSpoofScoreRef = useRef(0);
   const peakAcousticScoreRef = useRef(0);
   const isAnalyzingChunkRef = useRef(false);
+
+  // Session tracking refs for persistent history
+  const liveSessionIdRef = useRef<string | null>(null);
+  const liveStartTimeRef = useRef<string | null>(null);
+  const liveChunkCountRef = useRef(0);
 
   // Synchronize ref with state
   useEffect(() => {
@@ -206,11 +211,12 @@ export const RecordAnalyzeScreen = () => {
           const base64Data = await audioRecorder.getAudioBase64(chunkUri);
 
           if (base64Data && liveMonitoringRef.current) {
+            liveChunkCountRef.current += 1;
             // Run real inference on LFCC-LCNN + RawNet2 backend with owner voice filter
             const analysis = await api.analyzeAudio(
               base64Data,
-              undefined,
-              undefined,
+              'Live Call Monitor',
+              liveSessionIdRef.current || undefined,
               ownerSpeakerId,
               filterMyVoice
             );
@@ -379,6 +385,36 @@ export const RecordAnalyzeScreen = () => {
         await audioRecorder.stopRecording();
       } catch (_) {}
 
+      // Save the completed live call to history
+      if (liveSessionIdRef.current) {
+        const finalScore = hasDetectedSpoofRef.current ? peakSpoofScoreRef.current : liveScore;
+        const durSecs = liveDuration;
+        const durStr = `${Math.floor(durSecs / 60).toString().padStart(2, '0')}:${(durSecs % 60).toString().padStart(2, '0')}`;
+        const isSpoofed = hasDetectedSpoofRef.current || finalScore >= 0.70;
+        const isSuspicious = !isSpoofed && finalScore >= 0.30;
+        const level: 'LOW' | 'MEDIUM' | 'HIGH' = isSpoofed ? 'HIGH' : isSuspicious ? 'MEDIUM' : 'LOW';
+
+        const completedCallSession: Session = {
+          id: liveSessionIdRef.current,
+          session_id: liveSessionIdRef.current,
+          timestamp: liveStartTimeRef.current || new Date().toISOString(),
+          start_time: liveStartTimeRef.current || new Date().toISOString(),
+          speakerId: `Live Call Monitor (${durStr})`,
+          speaker_id: `Live Call Monitor (${durStr})`,
+          riskScore: finalScore,
+          risk_score: finalScore > 1 ? finalScore : finalScore * 100,
+          current_risk: finalScore > 1 ? finalScore : finalScore * 100,
+          riskLevel: level,
+          risk_level: level,
+          chunks_analyzed: liveChunkCountRef.current || chunkCount || 1,
+          risk_history: [finalScore * 100],
+        };
+
+        api.recordCompletedSession(completedCallSession).catch((e) => {
+          console.warn('Failed to record completed live call session:', e);
+        });
+      }
+
       // CRITICAL: If an AI spoof was detected during this call, retain the latched threat score!
       // Do NOT reset back to 9% genuine!
       if (hasDetectedSpoofRef.current) {
@@ -405,6 +441,11 @@ export const RecordAnalyzeScreen = () => {
       }
 
       // Reset all states and clear any previous latched alert for a fresh session
+      const newCallId = `call_${Date.now().toString(36)}`;
+      liveSessionIdRef.current = newCallId;
+      liveStartTimeRef.current = new Date().toISOString();
+      liveChunkCountRef.current = 0;
+
       hasDetectedSpoofRef.current = false;
       peakSpoofScoreRef.current = 0;
       peakAcousticScoreRef.current = 0;
@@ -484,14 +525,32 @@ export const RecordAnalyzeScreen = () => {
         if (uri) {
           const base64 = await audioRecorder.getAudioBase64(uri);
           if (base64) {
+            const snapId = `snap_${Date.now().toString(36)}`;
             const res = await api.analyzeAudio(
               base64,
-              undefined,
-              undefined,
+              'Snapshot Voice Sample',
+              snapId,
               ownerSpeakerId,
               filterMyVoice
             );
             setSnapshotResult(res);
+
+            const snapSession: Session = {
+              id: snapId,
+              session_id: snapId,
+              timestamp: new Date().toISOString(),
+              start_time: new Date().toISOString(),
+              speakerId: `Snapshot Analysis (${Math.max(1, snapshotDuration)}s)`,
+              speaker_id: `Snapshot Analysis (${Math.max(1, snapshotDuration)}s)`,
+              riskScore: res.score,
+              risk_score: res.risk_score,
+              current_risk: res.risk_score,
+              riskLevel: res.risk_level,
+              risk_level: res.risk_level,
+              chunks_analyzed: 1,
+              risk_history: [res.risk_score],
+            };
+            api.recordCompletedSession(snapSession).catch(() => {});
           }
         }
       } catch (err) {
@@ -526,14 +585,32 @@ export const RecordAnalyzeScreen = () => {
               if (uri) {
                 const base64 = await audioRecorder.getAudioBase64(uri);
                 if (base64) {
+                  const snapId = `snap_${Date.now().toString(36)}`;
                   const res = await api.analyzeAudio(
                     base64,
-                    undefined,
-                    undefined,
+                    'Snapshot Voice Sample',
+                    snapId,
                     ownerSpeakerId,
                     filterMyVoice
                   );
                   setSnapshotResult(res);
+
+                  const snapSession: Session = {
+                    id: snapId,
+                    session_id: snapId,
+                    timestamp: new Date().toISOString(),
+                    start_time: new Date().toISOString(),
+                    speakerId: `Snapshot Analysis (4s)`,
+                    speaker_id: `Snapshot Analysis (4s)`,
+                    riskScore: res.score,
+                    risk_score: res.risk_score,
+                    current_risk: res.risk_score,
+                    riskLevel: res.risk_level,
+                    risk_level: res.risk_level,
+                    chunks_analyzed: 1,
+                    risk_history: [res.risk_score],
+                  };
+                  api.recordCompletedSession(snapSession).catch(() => {});
                 }
               }
             } catch (err) {

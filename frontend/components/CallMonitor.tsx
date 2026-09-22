@@ -57,6 +57,7 @@ export default function CallMonitor() {
   const peakScoreRef = useRef(0);
   const chunkIndexRef = useRef(0);
   const maxDbInChunkRef = useRef(-90);
+  const activeSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/enrolled-speakers`, {
@@ -131,6 +132,7 @@ export default function CallMonitor() {
       setCallDuration(0);
       setChunkCount(0);
       chunkIndexRef.current = 0;
+      activeSessionIdRef.current = 'ses_' + Math.random().toString(36).substring(2, 9);
       hasSpoofedRef.current = false;
       peakScoreRef.current = 0;
       setHasDetectedSpoof(false);
@@ -211,6 +213,8 @@ export default function CallMonitor() {
             }),
             body: JSON.stringify({
               audio_base64: base64,
+              session_id: activeSessionIdRef.current || undefined,
+              speaker_id: 'Live Call Monitor',
               filter_owner: filterMyVoice,
               owner_speaker_id: ownerSpeakerId,
             }),

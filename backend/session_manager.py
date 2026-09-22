@@ -106,12 +106,16 @@ class SessionManager:
         
     def list_sessions(self) -> List[Dict]:
         with self._lock:
-            return [session.to_dict() for session in self.sessions.values()]
+            sessions = [session.to_dict() for session in self.sessions.values()]
+            sessions.sort(key=lambda s: s.get("last_active_time", s.get("start_time", "")), reverse=True)
+            return sessions
         
-    def update_session(self, session_id: str, risk_score: float) -> None:
+    def update_session(self, session_id: str, risk_score: float, speaker_id: Optional[str] = None) -> None:
         with self._lock:
             session = self.sessions.get(session_id)
             if session:
+                if speaker_id and (not session.speaker_id or session.speaker_id == "Anonymous_Caller"):
+                    session.speaker_id = speaker_id
                 session.add_risk_score(risk_score)
             
     def close_session(self, session_id: str) -> None:

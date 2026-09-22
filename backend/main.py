@@ -320,7 +320,8 @@ def analyze_audio(request: AnalyzeRequest):
 
     session_id = request.session_id
     if not session_id:
-        session_id = session_manager.create_session(request.speaker_id)
+        default_speaker = request.speaker_id or "Snapshot Voice Analysis"
+        session_id = session_manager.create_session(default_speaker)
     session = session_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
@@ -342,7 +343,7 @@ def analyze_audio(request: AnalyzeRequest):
         
         # Room ambient silence gate: if pure room tone and no voice activity, report low baseline
         if peak < 0.012:
-            session_manager.update_session(session_id, 8.0)
+            session_manager.update_session(session_id, 8.0, speaker_id=request.speaker_id)
             return AnalyzeResponse(
                 session_id=session_id,
                 risk_score=8.0,
@@ -414,7 +415,7 @@ def analyze_audio(request: AnalyzeRequest):
             has_target_speaker=has_target_speaker,
         )
         
-        session_manager.update_session(session_id, risk_assessment.fused_score * 100)
+        session_manager.update_session(session_id, risk_assessment.fused_score * 100, speaker_id=request.speaker_id)
         is_spoofed = (risk_assessment.fused_score >= 0.70) or (risk_assessment.acoustic_score >= 0.70)
         
         logger.info(
