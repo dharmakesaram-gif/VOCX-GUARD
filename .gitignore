@@ -43,6 +43,7 @@ mobile/.expo/
 
 # Development & Scratch Files
 scratch/
+kaggle_kernel/
 training_log.txt
 *.log
 *.tmp
