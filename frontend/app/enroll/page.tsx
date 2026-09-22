@@ -63,7 +63,10 @@ export default function EnrollPage() {
     try {
       const res = await fetch(`${API_BASE}/api/enroll`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Bypass-Tunnel-Reminder': 'true',
+        },
         body: JSON.stringify({
           speaker_id: targetId || 'my_owner_voice',
           audio_base64: base64,

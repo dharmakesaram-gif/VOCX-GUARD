@@ -3,9 +3,11 @@
 export const API_BASE = 
   process.env.NEXT_PUBLIC_API_URL || 
   (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-    ? `https://${window.location.hostname.replace('vocxguard-web', 'vocxguard-backend')}`
+    ? '' // Use same-origin relative path to leverage Next.js /api rewrites
     : 'http://localhost:8000');
 
 export const WS_BASE = 
   process.env.NEXT_PUBLIC_WS_URL || 
-  API_BASE.replace(/^http/, 'ws');
+  (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? `wss://${window.location.host}`
+    : 'ws://localhost:8000');

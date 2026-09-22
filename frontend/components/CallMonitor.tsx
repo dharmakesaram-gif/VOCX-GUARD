@@ -194,7 +194,10 @@ export default function CallMonitor() {
         try {
           const apiRes = await fetch(`${API_BASE}/api/analyze`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'Bypass-Tunnel-Reminder': 'true',
+            },
             body: JSON.stringify({
               audio_base64: base64,
               filter_owner: filterMyVoice,

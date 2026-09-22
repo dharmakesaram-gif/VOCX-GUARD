@@ -162,7 +162,10 @@ export default function AnalysisPage() {
 
       const response = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Bypass-Tunnel-Reminder': 'true',
+        },
         body: JSON.stringify(payload),
       });
 
