@@ -284,13 +284,13 @@ class RiskEngine:
     def get_risk_level(self, score: float) -> RiskLevel:
         """
         Determine risk level from fused score:
-        - < 0.35: LOW (Verified Authentic Human Voice)
-        - 0.35 - 0.52: MEDIUM (Suspicious / Inconclusive)
-        - >= 0.52: HIGH (Spoofed / AI Clone Attack)
+        - < 0.30: LOW (Verified Authentic Human Voice)
+        - 0.30 - 0.699: MEDIUM (Suspicious / Inconclusive)
+        - >= 0.70: HIGH (Spoofed / AI Clone Attack)
         """
-        if score < 0.35:
+        if score < 0.30:
             return RiskLevel.LOW
-        elif score < 0.52:
+        elif score < 0.70:
             return RiskLevel.MEDIUM
         else:
             return RiskLevel.HIGH

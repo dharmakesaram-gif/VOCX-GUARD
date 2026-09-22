@@ -5,6 +5,7 @@ class EnrollRequest(BaseModel):
     speaker_id: str
     audio_base64: Optional[str] = None
     sample_rate: int = 16000
+    allow_overwrite: Optional[bool] = False
 
 class EnrollResponse(BaseModel):
     speaker_id: str
@@ -35,6 +36,7 @@ class SessionInfo(BaseModel):
     speaker_id: Optional[str] = None
     status: Optional[str] = "active"
     start_time: str
+    last_active_time: Optional[str] = None
     chunks_analyzed: int
     current_risk: float
     risk_level: str

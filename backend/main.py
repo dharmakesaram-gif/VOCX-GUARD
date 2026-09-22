@@ -5,6 +5,8 @@ import uuid
 import base64
 import logging
 import datetime
+from typing import Optional, Tuple
+from contextlib import asynccontextmanager
 import numpy as np
 import torch
 import json
@@ -12,8 +14,9 @@ import json
 # Add parent directory to sys.path to allow importing from ml
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Security, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader, APIKeyQuery
 
 from backend.schemas import (
     EnrollRequest, EnrollResponse, AnalyzeRequest, AnalyzeResponse,
@@ -33,30 +36,38 @@ from ml.risk_engine import RiskEngine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Vocx Guard API")
+# Constants & Limits
+MAX_AUDIO_BASE64_BYTES = 10 * 1024 * 1024  # 10 MB payload cap
+MAX_AUDIO_DURATION_SECONDS = 60            # 60 seconds audio cap
+SAMPLE_RATE = 16000
+OWNER_BYPASS_SIMILARITY_THRESHOLD = 0.75   # Strict owner match threshold
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# API Key Security Configuration
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+API_KEY_QUERY = APIKeyQuery(name="api_key", auto_error=False)
+VOCXGUARD_API_KEY = os.getenv("VOCXGUARD_API_KEY", "").strip()
 
+# ML Model singletons
+lfcc_lcnn_model: Optional[LCNN] = None
+wavlm_model: Optional[WavLMDetector] = None
+rawnet2_model: Optional[RawNet2] = None
+speaker_verifier: Optional[SpeakerVerifier] = None
+risk_engine: Optional[RiskEngine] = None
 session_manager = SessionManager()
 
-# Initialize ML models
-lfcc_lcnn_model = None
-wavlm_model = None
-rawnet2_model = None
-speaker_verifier = None
-risk_engine = None
-ENROLLED_SPEAKERS = {}
+def _safe_torch_load(path: Path) -> dict:
+    """Safely loads PyTorch checkpoint with weights_only when supported."""
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True)
+    except TypeError:
+        return torch.load(path, map_location="cpu")
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Modern lifespan handler for model loading and resource management."""
     global lfcc_lcnn_model, wavlm_model, rawnet2_model, speaker_verifier, risk_engine
-    logger.info("Initializing Vocx Guard models...")
+    logger.info("Initializing Vocx Guard neural models...")
+    
     lfcc_lcnn_model = LCNN()
     lfcc_lcnn_model.eval()
     wavlm_model = WavLMDetector()
@@ -64,30 +75,33 @@ async def startup_event():
     rawnet2_model = RawNet2()
     rawnet2_model.eval()
 
-    # Load trained checkpoints if available
     checkpoint_dir = Path(__file__).parent.parent / "checkpoints"
+
+    # 1. LFCC-LCNN
     lcnn_path = checkpoint_dir / "lfcc_lcnn_best.pt"
     if lcnn_path.exists():
         try:
-            ckpt = torch.load(lcnn_path, map_location="cpu")
+            ckpt = _safe_torch_load(lcnn_path)
             lfcc_lcnn_model.load_state_dict(ckpt.get("model_state_dict", ckpt))
             logger.info("Loaded trained weights for LFCC-LCNN.")
         except Exception as e:
             logger.warning(f"Could not load LFCC-LCNN weights: {e}")
 
+    # 2. RawNet2
     rawnet_path = checkpoint_dir / "rawnet2_best.pt"
     if rawnet_path.exists():
         try:
-            ckpt = torch.load(rawnet_path, map_location="cpu")
+            ckpt = _safe_torch_load(rawnet_path)
             rawnet2_model.load_state_dict(ckpt.get("model_state_dict", ckpt))
             logger.info("Loaded trained weights for RawNet2.")
         except Exception as e:
             logger.warning(f"Could not load RawNet2 weights: {e}")
 
+    # 3. WavLM
     wavlm_path = checkpoint_dir / "wavlm_best.pt"
     if wavlm_path.exists():
         try:
-            ckpt = torch.load(wavlm_path, map_location="cpu")
+            ckpt = _safe_torch_load(wavlm_path)
             wavlm_model.load_state_dict(ckpt.get("model_state_dict", ckpt))
             logger.info("Loaded trained weights for WavLM.")
         except Exception as e:
@@ -95,39 +109,134 @@ async def startup_event():
 
     speaker_verifier = SpeakerVerifier()
     risk_engine = RiskEngine()
-    logger.info("Models initialized. Application ready.")
+    
+    if VOCXGUARD_API_KEY:
+        logger.info("API Key protection enabled.")
+    else:
+        logger.warning("VOCXGUARD_API_KEY not set. Running in development mode (unrestricted access).")
+
+    logger.info("Models initialized successfully. Application ready.")
+    yield
+    logger.info("Application shutting down.")
+
+app = FastAPI(
+    title="Vocx Guard API",
+    description="Real-Time Deepfake Voice Defense & Biomechanical Authentication Engine",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# CORS Configuration
+allowed_origins = [
+    "https://vocx-guard.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+extra_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+if extra_origins:
+    allowed_origins.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+async def verify_api_key(
+    header_key: Optional[str] = Security(API_KEY_HEADER),
+    query_key: Optional[str] = Security(API_KEY_QUERY),
+) -> bool:
+    """
+    Enforces API key authentication when VOCXGUARD_API_KEY is configured.
+    In local dev mode (unset or empty key), requests are permitted.
+    """
+    if not VOCXGUARD_API_KEY:
+        return True
+
+    provided_key = header_key or query_key
+    if not provided_key or provided_key != VOCXGUARD_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key. Provide a valid 'X-API-Key' header or '?api_key=' query parameter."
+        )
+    return True
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "name": "Vocx Guard API"}
+    return {
+        "status": "ok",
+        "name": "Vocx Guard API",
+        "version": "2.0.0",
+        "auth_enabled": bool(VOCXGUARD_API_KEY)
+    }
 
-@app.post("/api/enroll", response_model=EnrollResponse)
+@app.get("/health")
+def health_check_alt():
+    return health_check()
+
+@app.post("/api/enroll", response_model=EnrollResponse, dependencies=[Depends(verify_api_key)])
 def enroll_speaker(request: EnrollRequest):
     if not request.audio_base64:
-        raise HTTPException(status_code=400, detail="Audio data is required.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Audio data is required.")
     
-    audio = decode_audio(request.audio_base64)
-    mel_spec = extract_log_mel(audio)
-    speaker_verifier.enroll(request.speaker_id, [mel_spec])
-    ENROLLED_SPEAKERS[request.speaker_id] = True
+    if len(request.audio_base64) > MAX_AUDIO_BASE64_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Audio payload exceeds maximum permitted size of {MAX_AUDIO_BASE64_BYTES // (1024 * 1024)}MB."
+        )
+
+    speaker_id = request.speaker_id.strip()
+    if not speaker_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Speaker ID cannot be blank.")
+
+    # Guard against unauthorized voiceprint overwrites (prevents bypass attacks)
+    if speaker_id in speaker_verifier.voiceprints:
+        if not request.allow_overwrite:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Speaker ID '{speaker_id}' is already enrolled. Re-enrollment requires explicit allow_overwrite authorization."
+            )
+        logger.warning(f"Voiceprint for speaker '{speaker_id}' is being overwritten with explicit authorization.")
+
+    try:
+        audio = decode_audio(request.audio_base64)
+    except Exception as e:
+        logger.error(f"Audio decoding error in enroll: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed audio payload.")
+
+    if len(audio) > MAX_AUDIO_DURATION_SECONDS * SAMPLE_RATE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Audio duration exceeds maximum limit of {MAX_AUDIO_DURATION_SECONDS} seconds."
+        )
+
+    try:
+        audio = normalize_audio(audio)
+        mel_spec = extract_log_mel(audio)
+        speaker_verifier.enroll(speaker_id, [mel_spec])
+    except Exception as e:
+        logger.exception(f"Speaker enrollment failed for '{speaker_id}'.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Speaker enrollment processing failed.")
     
     return EnrollResponse(
-        speaker_id=request.speaker_id,
+        speaker_id=speaker_id,
         status="success",
-        message=f"Speaker {request.speaker_id} successfully enrolled.",
+        message=f"Speaker '{speaker_id}' successfully enrolled.",
         embedding_dim=192
     )
 
-def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, float, float]:
+def evaluate_neural_models(audio: np.ndarray, sr: int = SAMPLE_RATE) -> Tuple[float, float, float]:
     """
     Multi-Scale Neural Anti-Spoofing Inference.
     - If audio <= 2.5s: Evaluate directly (optimized for real-time live call chunks).
-    - If audio > 2.5s (e.g. 4s snapshots or full 15s+ file uploads):
-      Slide 2.0s - 2.5s windows with 1.0s hop across the audio to preserve local
-      transposed-convolution vocoder phase and aliasing signatures that would otherwise
-      be diluted by AdaptiveAvgPool2d((4, 4)).
-      Aggregates using peak threat dominance (if ANY window contains deepfake signatures,
-      the audio is an AI voice clone).
+    - If audio > 2.5s: Slide 2.0s - 2.5s windows with 1.0s hop across the audio to preserve local
+      transposed-convolution vocoder phase and aliasing signatures.
     """
     if len(audio) < sr:
         audio = np.pad(audio, (0, sr - len(audio)))
@@ -155,11 +264,9 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, f
         if len(chunk) < sr:
             break
 
-        # Energy / VAD gating: check if this window contains active speech or ambient noise/silence
         chunk_peak = float(np.max(np.abs(chunk)))
         chunk_rms = float(np.sqrt(np.mean(chunk ** 2)))
 
-        # Skip silent gaps, background mic hiss, or breathing pauses to prevent false vocoder detection
         if chunk_peak < 0.035 or chunk_rms < 0.005:
             continue
 
@@ -176,7 +283,6 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, f
         chunk_weights.append(chunk_rms)
 
     if not chunk_lfccs:
-        # Fallback to direct evaluation if no windows met voice energy threshold
         c_norm = normalize_audio(audio)
         lfcc = extract_lfcc(c_norm, sr=sr).unsqueeze(0)
         audio_tensor = torch.tensor(c_norm, dtype=torch.float32).unsqueeze(0)
@@ -187,19 +293,16 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, f
                 rawnet2_model.predict(audio_tensor).item()
             )
 
-    # Energy-weighted aggregation across active voiced windows
     weights = np.array(chunk_weights) / (np.sum(chunk_weights) + 1e-6)
     weighted_lfcc = float(np.sum(np.array(chunk_lfccs) * weights))
     weighted_wl = float(np.sum(np.array(chunk_wls) * weights))
     weighted_rn = float(np.sum(np.array(chunk_rns) * weights))
 
-    # If any high-energy speech chunk (RMS > 0.02) demonstrates clear multi-model synthetic signatures:
     high_energy_indices = [i for i, w in enumerate(chunk_weights) if w >= 0.020]
     if high_energy_indices:
         he_lfccs = [chunk_lfccs[i] for i in high_energy_indices]
         he_wls = [chunk_wls[i] for i in high_energy_indices]
         he_rns = [chunk_rns[i] for i in high_energy_indices]
-        # Check if high-energy voiced speech has strong synthetic detection
         if any(l >= 0.75 or (w >= 0.70 and r >= 0.70) or (w >= 0.75 and l >= 0.50) for l, w, r in zip(he_lfccs, he_wls, he_rns)):
             weighted_lfcc = max(weighted_lfcc, max(he_lfccs))
             weighted_wl = max(weighted_wl, max(he_wls))
@@ -207,17 +310,34 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, f
 
     return weighted_lfcc, weighted_wl, weighted_rn
 
-@app.post("/api/analyze", response_model=AnalyzeResponse)
+@app.post("/api/analyze", response_model=AnalyzeResponse, dependencies=[Depends(verify_api_key)])
 def analyze_audio(request: AnalyzeRequest):
+    if len(request.audio_base64) > MAX_AUDIO_BASE64_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Audio payload exceeds maximum permitted size of {MAX_AUDIO_BASE64_BYTES // (1024 * 1024)}MB."
+        )
+
     session_id = request.session_id
     if not session_id:
         session_id = session_manager.create_session(request.speaker_id)
     session = session_manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
         
     try:
-        audio = decode_audio(request.audio_base64)
+        try:
+            audio = decode_audio(request.audio_base64)
+        except Exception as decode_err:
+            logger.error(f"Failed to decode audio base64: {decode_err}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid audio base64 data.")
+
+        if len(audio) > MAX_AUDIO_DURATION_SECONDS * SAMPLE_RATE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Audio duration exceeds maximum limit of {MAX_AUDIO_DURATION_SECONDS} seconds."
+            )
+
         peak = float(np.max(np.abs(audio))) if len(audio) > 0 else 0.0
         
         # Room ambient silence gate: if pure room tone and no voice activity, report low baseline
@@ -239,21 +359,18 @@ def analyze_audio(request: AnalyzeRequest):
                 timestamp=datetime.datetime.now().isoformat()
             )
             
-        # Peak-normalize audio to standard range (matching ASVspoof training)
+        # Peak-normalize audio to standard range
         audio = normalize_audio(audio)
-        
-        # Log Mel for Speaker Verifier (batch, n_mels, time_frames)
         log_mel = extract_log_mel(audio)
 
-        # Owner Voice Filtering: If device owner filtering is enabled and the speech matches the owner,
-        # bypass deepfake inspection so the user's own voice is never flagged or analyzed as the incoming caller.
+        # Owner Voice Filtering: Strictly requires both verified match AND high similarity (>= 0.75)
         if request.filter_owner and request.owner_speaker_id:
-            owner_id = request.owner_speaker_id
+            owner_id = request.owner_speaker_id.strip()
             if owner_id in speaker_verifier.voiceprints:
                 try:
                     is_owner_match, owner_sim = speaker_verifier.verify(owner_id, log_mel)
-                    if is_owner_match or owner_sim >= 0.52:
-                        logger.info(f"Local device owner speech detected (similarity={owner_sim:.3f}). Bypassing caller deepfake scan.")
+                    if is_owner_match and owner_sim >= OWNER_BYPASS_SIMILARITY_THRESHOLD:
+                        logger.info(f"Local device owner verified (similarity={owner_sim:.3f} >= {OWNER_BYPASS_SIMILARITY_THRESHOLD}). Deepfake scan safely bypassed.")
                         return AnalyzeResponse(
                             session_id=session_id,
                             risk_score=session.get_current_risk(),
@@ -266,18 +383,18 @@ def analyze_audio(request: AnalyzeRequest):
                                 "speaker_channel": "local_user",
                                 "is_owner_speaking": True,
                                 "owner_similarity": round(float(owner_sim), 3),
-                                "note": "Local user (device owner) voice detected. Deepfake scan bypassed."
+                                "note": "Local user (device owner) voice verified. Deepfake scan bypassed."
                             },
                             timestamp=datetime.datetime.now().isoformat()
                         )
                 except Exception as verify_err:
                     logger.warning(f"Owner verification check error: {verify_err}")
         
-        # Multi-scale neural evaluation for LFCC-LCNN, WavLM, RawNet2
+        # Multi-scale neural evaluation
         lfcc_prob, wavlm_prob, rawnet2_prob = evaluate_neural_models(audio)
             
         has_target_speaker = bool(request.speaker_id and request.speaker_id in speaker_verifier.voiceprints)
-        similarity = 0.85 # baseline neutral if no enrolled voiceprint target
+        similarity = 0.85
         if has_target_speaker:
             is_match, similarity = speaker_verifier.verify(request.speaker_id, log_mel)
         
@@ -298,17 +415,13 @@ def analyze_audio(request: AnalyzeRequest):
         )
         
         session_manager.update_session(session_id, risk_assessment.fused_score * 100)
-        is_spoofed = (risk_assessment.fused_score >= 0.50) or (risk_assessment.acoustic_score >= 0.50)
+        is_spoofed = (risk_assessment.fused_score >= 0.70) or (risk_assessment.acoustic_score >= 0.70)
         
         logger.info(
             f"Analyze: peak={peak:.4f}, lfcc={lfcc_prob:.4f}, rawnet2={rawnet2_prob:.4f}, "
             f"wavlm={wavlm_prob:.4f}, bio={bio_metrics.get('bio_spoof_prob', 0):.4f}, "
-            f"jitter={bio_metrics.get('jitter', 0):.4f}, acoustic={risk_assessment.acoustic_score:.4f}, "
-            f"fused={risk_assessment.fused_score:.4f}, spoofed={is_spoofed}"
+            f"acoustic={risk_assessment.acoustic_score:.4f}, fused={risk_assessment.fused_score:.4f}, spoofed={is_spoofed}"
         )
-        
-        # Convert timestamp to str for JSON serialization
-        timestamp_str = risk_assessment.timestamp.isoformat()
         
         return AnalyzeResponse(
             session_id=session_id,
@@ -319,17 +432,22 @@ def analyze_audio(request: AnalyzeRequest):
             context_score=risk_assessment.context_score * 100,
             is_spoofed=is_spoofed,
             details=risk_assessment.details,
-            timestamp=timestamp_str
+            timestamp=risk_assessment.timestamp.isoformat()
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Analysis failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Analysis failed due to internal error.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal analysis error. Please try again."
+        )
 
-@app.get("/api/risk-score/{session_id}", response_model=RiskScoreResponse)
+@app.get("/api/risk-score/{session_id}", response_model=RiskScoreResponse, dependencies=[Depends(verify_api_key)])
 def get_risk_score(session_id: str):
     session = session_manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
         
     return RiskScoreResponse(
         session_id=session_id,
@@ -338,24 +456,33 @@ def get_risk_score(session_id: str):
         risk_history=session.risk_history
     )
 
-@app.get("/api/sessions", response_model=SessionListResponse)
+@app.get("/api/sessions", response_model=SessionListResponse, dependencies=[Depends(verify_api_key)])
 def list_sessions():
     return SessionListResponse(sessions=[SessionInfo(**s) for s in session_manager.list_sessions()])
 
-@app.delete("/api/sessions/{session_id}")
+@app.delete("/api/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
 def close_session(session_id: str):
     session = session_manager.get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
     session_manager.close_session(session_id)
     return {"status": "closed", "session_id": session_id}
 
-@app.get("/api/enrolled-speakers")
+@app.get("/api/enrolled-speakers", dependencies=[Depends(verify_api_key)])
 def list_enrolled_speakers():
     return {"speakers": speaker_verifier.enrolled_speakers}
 
 @app.websocket("/ws/stream")
 async def websocket_endpoint(websocket: WebSocket):
+    # Enforce API key authentication on WebSocket handshake if configured
+    if VOCXGUARD_API_KEY:
+        query_key = websocket.query_params.get("api_key") or websocket.query_params.get("token")
+        header_key = websocket.headers.get("x-api-key")
+        provided_key = header_key or query_key
+        if not provided_key or provided_key != VOCXGUARD_API_KEY:
+            await websocket.close(code=1008, reason="Unauthorized: invalid or missing API key")
+            return
+
     await websocket.accept()
     session_id = session_manager.create_session()
     try:
@@ -372,6 +499,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if not audio_base64:
                     continue
+
+                if len(audio_base64) > MAX_AUDIO_BASE64_BYTES:
+                    await websocket.send_json({"error": "Payload exceeds maximum allowed 10MB limit."})
+                    continue
                     
                 audio = decode_audio(audio_base64)
                 peak = float(np.max(np.abs(audio))) if len(audio) > 0 else 0.0
@@ -386,6 +517,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "risk_level": "LOW",
                         "acoustic_score": 8.0,
                         "speaker_score": 7.0,
+                        "context_score": 0.0,
                         "is_spoofed": False,
                         "details": {"status": "ambient_silence", "peak_amplitude": peak}
                     })
@@ -394,11 +526,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 audio = normalize_audio(audio)
                 log_mel = extract_log_mel(audio)
 
-                # Owner voice bypass check
-                if filter_owner and owner_speaker_id and owner_speaker_id in speaker_verifier.voiceprints:
+                # Strict owner voice bypass check
+                if filter_owner and owner_speaker_id and owner_speaker_id.strip() in speaker_verifier.voiceprints:
                     try:
-                        is_owner_match, owner_sim = speaker_verifier.verify(owner_speaker_id, log_mel)
-                        if is_owner_match or owner_sim >= 0.52:
+                        owner_id = owner_speaker_id.strip()
+                        is_owner_match, owner_sim = speaker_verifier.verify(owner_id, log_mel)
+                        if is_owner_match and owner_sim >= OWNER_BYPASS_SIMILARITY_THRESHOLD:
                             session = session_manager.get_session(session_id)
                             current_r = session.get_current_risk() if session else 8.0
                             current_lvl = session.get_risk_level() if session else "LOW"
@@ -408,12 +541,13 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "risk_level": current_lvl,
                                 "acoustic_score": 6.0,
                                 "speaker_score": 0.0,
+                                "context_score": 0.0,
                                 "is_spoofed": False,
                                 "details": {
                                     "speaker_channel": "local_user",
                                     "is_owner_speaking": True,
                                     "owner_similarity": round(float(owner_sim), 3),
-                                    "note": "Local user (device owner) voice detected. Deepfake scan bypassed."
+                                    "note": "Local user (device owner) voice verified. Deepfake scan bypassed."
                                 }
                             })
                             continue
@@ -444,22 +578,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 session_manager.update_session(session_id, risk_assessment.fused_score * 100)
                 session = session_manager.get_session(session_id)
                 
-                is_spoofed = (risk_assessment.fused_score >= 0.50) or (risk_assessment.acoustic_score >= 0.50)
+                is_spoofed = (risk_assessment.fused_score >= 0.70) or (risk_assessment.acoustic_score >= 0.70)
                 await websocket.send_json({
                     "session_id": session_id,
                     "risk_score": session.get_current_risk(),
                     "risk_level": session.get_risk_level(),
                     "acoustic_score": risk_assessment.acoustic_score * 100,
                     "speaker_score": risk_assessment.speaker_score * 100,
+                    "context_score": risk_assessment.context_score * 100,
                     "is_spoofed": is_spoofed,
                     "details": risk_assessment.details,
                 })
             except Exception as e:
-                logger.error(f"WS error: {str(e)}")
-                await websocket.send_json({"error": str(e)})
+                logger.exception("WS frame analysis failed.")
+                await websocket.send_json({"error": "Audio frame processing error."})
                 
     except WebSocketDisconnect:
         session_manager.close_session(session_id)
-        logger.info(f"Session {session_id} disconnected and closed.")
+        logger.info(f"Session {session_id} disconnected.")
     finally:
         session_manager.close_session(session_id)
