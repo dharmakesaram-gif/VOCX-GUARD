@@ -200,7 +200,7 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = 16000) -> tuple[float, f
         he_wls = [chunk_wls[i] for i in high_energy_indices]
         he_rns = [chunk_rns[i] for i in high_energy_indices]
         # Check if high-energy voiced speech has strong synthetic detection
-        if any((l >= 0.75 and (w >= 0.70 or r >= 0.70)) or (w >= 0.80 and r >= 0.80) for l, w, r in zip(he_lfccs, he_wls, he_rns)):
+        if any(l >= 0.75 or (w >= 0.70 and r >= 0.70) or (w >= 0.75 and l >= 0.50) for l, w, r in zip(he_lfccs, he_wls, he_rns)):
             weighted_lfcc = max(weighted_lfcc, max(he_lfccs))
             weighted_wl = max(weighted_wl, max(he_wls))
             weighted_rn = max(weighted_rn, max(he_rns))

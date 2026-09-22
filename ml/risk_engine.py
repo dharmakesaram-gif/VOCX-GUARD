@@ -187,6 +187,9 @@ class RiskEngine:
         elif (lfcc_lcnn_prob >= 0.60 and (wavlm_prob >= 0.60 or rawnet2_prob >= 0.60)) or (neural_score >= 0.50 and high_model_votes >= 2):
             # True multi-model AI voice clone consensus (e.g. ElevenLabs, Tacotron, VITS)
             threat_score = max(neural_score, 0.85 + 0.15 * (neural_score - 0.50))
+        elif lfcc_lcnn_prob >= 0.75:
+            # Overwhelming spectral evidence of synthetic vocoder / neural TTS (LFCC-LCNN benchmark)
+            threat_score = max(lfcc_lcnn_prob * 0.88, 0.75)
         elif bio >= 0.70 and neural_score >= 0.35:
             # Physical reality violation confirmed with elevated neural suspicion
             threat_score = max(bio, 0.75 + 0.20 * (bio - 0.70))

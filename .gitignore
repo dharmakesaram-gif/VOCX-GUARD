@@ -44,6 +44,8 @@ mobile/.expo/
 # Development & Scratch Files
 scratch/
 kaggle_kernel/
+checkpoints/backup_prior/
+*.ipynb
 training_log.txt
 *.log
 *.tmp
