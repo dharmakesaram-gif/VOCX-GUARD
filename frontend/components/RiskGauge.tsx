@@ -10,18 +10,18 @@ interface RiskGaugeProps {
 export default function RiskGauge({ score, size = 200 }: RiskGaugeProps) {
   const normalizedScore = Math.min(Math.max(score, 0), 1);
   
-  // Determine color based on score
-  let color = '#00e676'; // success (green)
-  let glowColor = 'rgba(0, 230, 118, 0.5)';
+  // Determine color based on score aligned with backend (<0.30 LOW, <0.70 MEDIUM, >=0.70 HIGH)
+  let color = '#00ff88'; // cyber-emerald
+  let glowColor = 'rgba(0, 255, 136, 0.5)';
   let label = 'LOW RISK';
   
-  if (normalizedScore >= 0.50) {
-    color = '#ff3b3b'; // danger (red)
-    glowColor = 'rgba(255, 59, 59, 0.5)';
+  if (normalizedScore >= 0.70) {
+    color = '#ff0055'; // cyber-crimson
+    glowColor = 'rgba(255, 0, 85, 0.5)';
     label = 'HIGH RISK';
-  } else if (normalizedScore >= 0.35) {
-    color = '#ffb800'; // warning (yellow)
-    glowColor = 'rgba(255, 184, 0, 0.5)';
+  } else if (normalizedScore >= 0.30) {
+    color = '#ffaa00'; // cyber-amber
+    glowColor = 'rgba(255, 170, 0, 0.5)';
     label = 'MEDIUM RISK';
   }
 

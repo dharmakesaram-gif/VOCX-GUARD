@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { API_BASE } from '../../lib/config';
+import { API_BASE, getAuthHeaders } from '../../lib/config';
 import RiskGauge from '@/components/RiskGauge';
 import WaveformVisualizer from '@/components/WaveformVisualizer';
 import { Upload, Mic, Play, Pause, FileAudio, CheckCircle, AlertTriangle, XCircle, RefreshCw, Radio } from 'lucide-react';
@@ -45,8 +45,10 @@ export default function AnalysisPage() {
   const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/enrolled-speakers`)
-      .then((res) => res.json())
+    fetch(`${API_BASE}/api/enrolled-speakers`, {
+      headers: getAuthHeaders(),
+    })
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.speakers) && data.speakers.length > 0) {
           setEnrolledList(data.speakers);
@@ -162,15 +164,15 @@ export default function AnalysisPage() {
 
       const response = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
-        headers: {
+        headers: getAuthHeaders({
           'Content-Type': 'application/json',
-          'Bypass-Tunnel-Reminder': 'true',
-        },
+        }),
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        throw new Error(`Server returned error ${response.status}: ${response.statusText}`);
+        const errData = await response.json().catch(() => null);
+        throw new Error(errData?.detail || `Server returned error ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, getAuthHeaders } from '../lib/config';
 
 interface SessionItem {
   id: string;
@@ -24,30 +24,44 @@ export default function SessionHistory() {
   const [sessions, setSessions] = useState<SessionItem[]>(defaultSessions);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/sessions`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && Array.isArray(data.sessions) && data.sessions.length > 0) {
-          const mapped = data.sessions.map((s: any) => {
-            const risk = (s.current_risk || 0) / 100;
-            const status = risk >= 0.5 ? 'Blocked' : risk >= 0.35 ? 'Flagged' : 'Verified';
-            let timeStr = 'Just now';
-            if (s.start_time) {
-              const d = new Date(s.start_time);
-              timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-            }
-            return {
-              id: s.session_id ? `SES-${s.session_id.slice(0, 6).toUpperCase()}` : 'SES-LIVE',
-              speaker: s.speaker_id || (risk >= 0.5 ? 'Synthetic Voice Clone' : 'Verified Human'),
-              time: timeStr,
-              score: risk,
-              status,
-            };
-          });
-          setSessions(mapped);
-        }
+    let cancelled = false;
+
+    const fetchSessions = () => {
+      fetch(`${API_BASE}/api/sessions`, {
+        headers: getAuthHeaders(),
       })
-      .catch(() => {});
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled || !data) return;
+          if (Array.isArray(data.sessions) && data.sessions.length > 0) {
+            const mapped = data.sessions.map((s: any) => {
+              const risk = (s.current_risk || 0) / 100;
+              const status = risk >= 0.7 ? 'Blocked' : risk >= 0.3 ? 'Flagged' : 'Verified';
+              let timeStr = 'Just now';
+              if (s.start_time) {
+                const d = new Date(s.start_time);
+                timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+              }
+              return {
+                id: s.session_id ? `SES-${s.session_id.slice(0, 6).toUpperCase()}` : 'SES-LIVE',
+                speaker: s.speaker_id || (risk >= 0.7 ? 'Synthetic Voice Clone' : 'Verified Human'),
+                time: timeStr,
+                score: risk,
+                status,
+              };
+            });
+            setSessions(mapped);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   return (
@@ -64,8 +78,8 @@ export default function SessionHistory() {
         </thead>
         <tbody>
           {sessions.map((session, idx) => {
-            const isHigh = session.score >= 0.5;
-            const isMed = session.score >= 0.35 && session.score < 0.5;
+            const isHigh = session.score >= 0.70;
+            const isMed = session.score >= 0.30 && session.score < 0.70;
 
             return (
               <tr key={idx} className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">

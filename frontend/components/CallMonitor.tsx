@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Phone, ShieldAlert, Check, X, Clock, Mic, MicOff, Volume2, ShieldCheck, RefreshCw, Radio } from 'lucide-react';
-import { API_BASE } from '../lib/config';
+import { API_BASE, getAuthHeaders } from '../lib/config';
 import WaveformVisualizer from './WaveformVisualizer';
 import AlertBanner from './AlertBanner';
 
@@ -49,8 +49,10 @@ export default function CallMonitor() {
   const maxDbInChunkRef = useRef(-90);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/enrolled-speakers`)
-      .then((res) => res.json())
+    fetch(`${API_BASE}/api/enrolled-speakers`, {
+      headers: getAuthHeaders(),
+    })
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.speakers) && data.speakers.length > 0) {
           setEnrolledList(data.speakers);
@@ -194,10 +196,9 @@ export default function CallMonitor() {
         try {
           const apiRes = await fetch(`${API_BASE}/api/analyze`, {
             method: 'POST',
-            headers: {
+            headers: getAuthHeaders({
               'Content-Type': 'application/json',
-              'Bypass-Tunnel-Reminder': 'true',
-            },
+            }),
             body: JSON.stringify({
               audio_base64: base64,
               filter_owner: filterMyVoice,
@@ -244,7 +245,7 @@ export default function CallMonitor() {
                 setActiveChannel('IDLE');
               }
 
-              const isSpoofed = data.is_spoofed || score >= 0.5;
+              const isSpoofed = Boolean(data.is_spoofed) || score >= 0.70;
               if (isSpoofed) {
                 hasSpoofedRef.current = true;
                 peakScoreRef.current = Math.max(peakScoreRef.current, score);

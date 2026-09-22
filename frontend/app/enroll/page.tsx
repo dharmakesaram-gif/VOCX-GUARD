@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Upload, CheckCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
-import { API_BASE } from '../../lib/config';
+import { API_BASE, getAuthHeaders } from '../../lib/config';
 
 interface EnrolledSpeakerItem {
   id: string;
@@ -42,7 +42,9 @@ export default function EnrollPage() {
 
   const fetchEnrolled = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/enrolled-speakers`);
+      const res = await fetch(`${API_BASE}/api/enrolled-speakers`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.speakers && Array.isArray(data.speakers) && data.speakers.length > 0) {
@@ -63,18 +65,19 @@ export default function EnrollPage() {
     try {
       const res = await fetch(`${API_BASE}/api/enroll`, {
         method: 'POST',
-        headers: {
+        headers: getAuthHeaders({
           'Content-Type': 'application/json',
-          'Bypass-Tunnel-Reminder': 'true',
-        },
+        }),
         body: JSON.stringify({
           speaker_id: targetId || 'my_owner_voice',
           audio_base64: base64,
+          allow_overwrite: true,
         }),
       });
 
       if (!res.ok) {
-        throw new Error(`Enrollment returned HTTP ${res.status}`);
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.detail || `Enrollment returned HTTP ${res.status}`);
       }
 
       setStatus('enrolled');

@@ -11,3 +11,16 @@ export const WS_BASE =
   (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
     ? `wss://${window.location.host}`
     : 'ws://localhost:8000');
+
+export const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
+
+export function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Bypass-Tunnel-Reminder': 'true',
+    ...extraHeaders,
+  };
+  if (API_KEY) {
+    headers['X-API-Key'] = API_KEY;
+  }
+  return headers;
+}
