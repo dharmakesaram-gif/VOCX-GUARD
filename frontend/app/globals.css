@@ -105,3 +105,70 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #00f0ff;
 }
+
+/* Cyber HUD Tactical Panels */
+.hud-panel {
+  position: relative;
+  background: rgba(8, 12, 28, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.7), inset 0 0 20px rgba(0, 240, 255, 0.03);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-panel:hover {
+  border-color: rgba(0, 240, 255, 0.35);
+  box-shadow: 0 12px 48px -10px rgba(0, 240, 255, 0.2), inset 0 0 25px rgba(0, 240, 255, 0.05);
+}
+
+.hud-corner {
+  position: relative;
+}
+
+.hud-corner::before,
+.hud-corner::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.hud-corner::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid #00f0ff;
+  border-left: 2px solid #00f0ff;
+}
+
+.hud-corner::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid #00f0ff;
+  border-right: 2px solid #00f0ff;
+}
+
+/* Radar Sweep */
+@keyframes radar-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.radar-sweep-anim {
+  animation: radar-spin 4s linear infinite;
+}
+
+/* Cyber Glitch/Glow Text */
+.text-cyber-glow {
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.6), 0 0 24px rgba(0, 240, 255, 0.2);
+}
+
+.text-danger-glow {
+  text-shadow: 0 0 12px rgba(255, 0, 85, 0.7), 0 0 24px rgba(255, 0, 85, 0.3);
+}
+
+.text-success-glow {
+  text-shadow: 0 0 12px rgba(0, 255, 136, 0.7), 0 0 24px rgba(0, 255, 136, 0.3);
+}

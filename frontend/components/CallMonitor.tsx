@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, ShieldAlert, Check, X, Clock, Mic, MicOff, Volume2, ShieldCheck, RefreshCw, Radio } from 'lucide-react';
+import { Phone, ShieldAlert, Check, X, Clock, Mic, MicOff, Volume2, ShieldCheck, RefreshCw, Radio, Cpu } from 'lucide-react';
 import { API_BASE, getAuthHeaders } from '../lib/config';
 import WaveformVisualizer from './WaveformVisualizer';
 import AlertBanner from './AlertBanner';
@@ -15,6 +15,10 @@ interface ChunkLogItem {
   channel: 'YOU (OWNER)' | 'CALLER';
   verdict: 'GENUINE' | 'SUSPICIOUS' | 'SPOOFED';
   latencyMs: number;
+  lfcc: number;
+  rawnet: number;
+  wavlm: number;
+  bio: number;
 }
 
 export default function CallMonitor() {
@@ -35,6 +39,12 @@ export default function CallMonitor() {
   const [chunkCount, setChunkCount] = useState(0);
   const [chunkLogs, setChunkLogs] = useState<ChunkLogItem[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Real-time Neural Ensemble sub-model telemetry
+  const [liveLfcc, setLiveLfcc] = useState(0.03);
+  const [liveRawnet, setLiveRawnet] = useState(0.04);
+  const [liveWavlm, setLiveWavlm] = useState(0.03);
+  const [liveBio, setLiveBio] = useState(0.08);
 
   const isLiveRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
@@ -211,6 +221,17 @@ export default function CallMonitor() {
             const latency = Date.now() - startTime;
             setLatencyMs(latency);
 
+            // Extract real-time neural ensemble breakdown
+            const lfcc = Number(data.details?.acoustic_breakdown?.lfcc_lcnn ?? 0.04);
+            const rawnet = Number(data.details?.acoustic_breakdown?.rawnet2 ?? 0.04);
+            const wavlm = Number(data.details?.acoustic_breakdown?.wavlm ?? 0.04);
+            const bio = Number(data.details?.biomechanical?.bio_spoof_prob ?? 0.08);
+
+            setLiveLfcc(lfcc);
+            setLiveRawnet(rawnet);
+            setLiveWavlm(wavlm);
+            setLiveBio(bio);
+
             const isOwner = Boolean(
               data.details?.is_owner_speaking || data.details?.speaker_channel === 'local_user'
             );
@@ -235,6 +256,10 @@ export default function CallMonitor() {
                   channel: 'YOU (OWNER)',
                   verdict: 'GENUINE',
                   latencyMs: latency,
+                  lfcc,
+                  rawnet,
+                  wavlm,
+                  bio,
                 },
                 ...prev.slice(0, 7),
               ]);
@@ -269,6 +294,10 @@ export default function CallMonitor() {
                   channel: 'CALLER',
                   verdict: isSpoofed || hasSpoofedRef.current ? 'SPOOFED' : score >= 0.35 ? 'SUSPICIOUS' : 'GENUINE',
                   latencyMs: latency,
+                  lfcc,
+                  rawnet,
+                  wavlm,
+                  bio,
                 },
                 ...prev.slice(0, 7),
               ]);
@@ -491,45 +520,142 @@ export default function CallMonitor() {
           </div>
         </div>
 
+        {/* Real-Time Neural Ensemble Telemetry Matrix */}
+        <div className="p-3 rounded-xl bg-slate-950/80 border border-cyber-blue/30 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Cpu size={14} className="text-cyber-blue animate-pulse" />
+              <span className="text-xs font-mono font-bold text-gray-200 uppercase tracking-wider">
+                Live Neural Ensemble Telemetry
+              </span>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/30">
+              {isLive ? 'STREAMING REAL-TIME' : 'STANDBY'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+            {/* LFCC-LCNN */}
+            <div className="p-2 rounded-lg bg-black/40 border border-cyan-500/20">
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>LFCC-LCNN</span>
+                <span className={liveLfcc >= 0.5 ? 'text-cyber-crimson font-bold' : 'text-cyan-300'}>
+                  {(liveLfcc * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${liveLfcc >= 0.5 ? 'bg-danger' : liveLfcc >= 0.3 ? 'bg-warning' : 'bg-cyber-blue'}`}
+                  style={{ width: `${Math.min(100, Math.max(5, liveLfcc * 100))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* RawNet2 */}
+            <div className="p-2 rounded-lg bg-black/40 border border-blue-500/20">
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>RawNet2</span>
+                <span className={liveRawnet >= 0.5 ? 'text-cyber-crimson font-bold' : 'text-blue-300'}>
+                  {(liveRawnet * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${liveRawnet >= 0.5 ? 'bg-danger' : liveRawnet >= 0.3 ? 'bg-warning' : 'bg-blue-400'}`}
+                  style={{ width: `${Math.min(100, Math.max(5, liveRawnet * 100))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* WavLM */}
+            <div className="p-2 rounded-lg bg-black/40 border border-purple-500/20">
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>WavLM</span>
+                <span className={liveWavlm >= 0.5 ? 'text-cyber-crimson font-bold' : 'text-purple-300'}>
+                  {(liveWavlm * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${liveWavlm >= 0.5 ? 'bg-danger' : liveWavlm >= 0.3 ? 'bg-warning' : 'bg-purple-400'}`}
+                  style={{ width: `${Math.min(100, Math.max(5, liveWavlm * 100))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Biomechanical Reality */}
+            <div className="p-2 rounded-lg bg-black/40 border border-emerald-500/20">
+              <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                <span>Bio Reality</span>
+                <span className={liveBio >= 0.5 ? 'text-cyber-crimson font-bold' : 'text-cyber-emerald'}>
+                  {(liveBio * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${liveBio >= 0.5 ? 'bg-danger' : liveBio >= 0.3 ? 'bg-warning' : 'bg-cyber-emerald'}`}
+                  style={{ width: `${Math.min(100, Math.max(5, liveBio * 100))}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Live Rolling Chunk Logs */}
         {isLive && chunkLogs.length > 0 && (
           <div className="space-y-2 pt-2 border-t border-gray-800">
-            <h4 className="text-xs font-bold text-gray-400 tracking-wider uppercase">Live Chunk Audit Feed</h4>
-            <div className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-xs">
+            <h4 className="text-xs font-bold text-gray-400 tracking-wider uppercase flex items-center justify-between">
+              <span>Live Chunk Audit Feed</span>
+              <span className="text-[10px] font-mono text-cyan-400">Ensemble Sub-Model Verification</span>
+            </h4>
+            <div className="space-y-1.5 max-h-44 overflow-y-auto font-mono text-xs">
               {chunkLogs.map((log) => (
                 <div
                   key={log.id}
-                  className="flex items-center justify-between p-2 rounded bg-primary/40 border border-gray-800 hover:bg-primary/60 transition-colors"
+                  className="p-2 rounded bg-primary/40 border border-gray-800 hover:bg-primary/60 transition-colors space-y-1"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500">[{log.time}]</span>
-                    <span className="text-gray-400">#{log.chunkNum}</span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        log.channel === 'YOU (OWNER)'
-                          ? 'bg-success/20 text-success border border-success/30'
-                          : 'bg-accent/20 text-accent border border-accent/30'
-                      }`}
-                    >
-                      {log.channel === 'YOU (OWNER)' ? 'YOU' : 'CALLER'}
-                    </span>
-                    <span className="text-gray-400">{log.db}dB</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">[{log.time}]</span>
+                      <span className="text-gray-400">#{log.chunkNum}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          log.channel === 'YOU (OWNER)'
+                            ? 'bg-success/20 text-success border border-success/30'
+                            : 'bg-accent/20 text-accent border border-accent/30'
+                        }`}
+                      >
+                        {log.channel === 'YOU (OWNER)' ? 'YOU' : 'CALLER'}
+                      </span>
+                      <span className="text-gray-400">{log.db}dB</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`font-bold ${
+                          log.verdict === 'SPOOFED'
+                            ? 'text-danger'
+                            : log.verdict === 'SUSPICIOUS'
+                            ? 'text-warning'
+                            : 'text-success'
+                        }`}
+                      >
+                        {log.verdict === 'SPOOFED'
+                          ? `${(log.score * 100).toFixed(0)}% AI CLONE`
+                          : `${((1 - log.score) * 100).toFixed(0)}% AUTHENTIC`}
+                      </span>
+                      <span className="text-gray-500 text-[10px]">{log.latencyMs}ms</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`font-bold ${
-                        log.verdict === 'SPOOFED'
-                          ? 'text-danger'
-                          : log.verdict === 'SUSPICIOUS'
-                          ? 'text-warning'
-                          : 'text-success'
-                      }`}
-                    >
-                      {log.verdict === 'SPOOFED'
-                        ? `${(log.score * 100).toFixed(0)}% AI CLONE`
-                        : `${((1 - log.score) * 100).toFixed(0)}% AUTHENTIC`}
-                    </span>
-                    <span className="text-gray-500 text-[10px]">{log.latencyMs}ms</span>
+
+                  {/* Per-chunk sub-model breakdown pills */}
+                  <div className="flex items-center gap-2 text-[10px] text-gray-400 font-mono pt-1 border-t border-white/5">
+                    <span className="text-cyan-400/90">LFCC: {(log.lfcc * 100).toFixed(0)}%</span>
+                    <span className="text-gray-600">·</span>
+                    <span className="text-blue-400/90">RN2: {(log.rawnet * 100).toFixed(0)}%</span>
+                    <span className="text-gray-600">·</span>
+                    <span className="text-purple-400/90">WLM: {(log.wavlm * 100).toFixed(0)}%</span>
+                    <span className="text-gray-600">·</span>
+                    <span className="text-emerald-400/90">BIO: {(log.bio * 100).toFixed(0)}%</span>
                   </div>
                 </div>
               ))}
