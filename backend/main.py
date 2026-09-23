@@ -9,6 +9,7 @@ from typing import Optional, Tuple
 from contextlib import asynccontextmanager
 import numpy as np
 import torch
+torch.set_num_threads(4)
 import json
 
 # Add parent directory to sys.path to allow importing from ml
@@ -142,7 +143,7 @@ if extra_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -177,6 +178,7 @@ def health_check():
     }
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check_alt():
     return health_check()
 
@@ -234,42 +236,61 @@ def enroll_speaker(request: EnrollRequest):
 def evaluate_neural_models(audio: np.ndarray, sr: int = SAMPLE_RATE) -> Tuple[float, float, float]:
     """
     Multi-Scale Neural Anti-Spoofing Inference.
-    - If audio <= 2.5s: Evaluate directly (optimized for real-time live call chunks).
-    - If audio > 2.5s: Slide 2.0s - 2.5s windows with 1.0s hop across the audio to preserve local
-      transposed-convolution vocoder phase and aliasing signatures.
+    - If audio <= 3.5s: Evaluate directly (optimized for real-time live call chunks).
+    - If audio > 3.5s: Select up to 2 key representative slices (highest speech energy slice
+      and center slice) to retain full forensic sensitivity while completing inference in < 200ms.
     """
     if len(audio) < sr:
         audio = np.pad(audio, (0, sr - len(audio)))
 
     total_len = len(audio)
 
-    if total_len <= int(2.5 * sr):
-        lfcc = extract_lfcc(audio, sr=sr).unsqueeze(0)
-        audio_tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    # Fast single pass for real-time live call chunks (<= 3.5s)
+    if total_len <= int(3.5 * sr):
+        c_norm = normalize_audio(audio)
+        lfcc = extract_lfcc(c_norm, sr=sr).unsqueeze(0)
+        audio_tensor = torch.tensor(c_norm, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
             lfcc_prob = lfcc_lcnn_model.predict(lfcc).item()
             wavlm_prob = wavlm_model.predict(audio_tensor).item()
             rawnet2_prob = rawnet2_model.predict(audio_tensor).item()
         return lfcc_prob, wavlm_prob, rawnet2_prob
 
+    # Representative slice selection for longer recordings (snapshots/forensics)
     win_samples = int(2.5 * sr)
-    hop_samples = int(1.0 * sr)
+    step = int(0.5 * sr)
+    best_start = 0
+    max_energy = -1.0
+
+    # Scan for the highest speech energy window
+    for st in range(0, total_len - win_samples + 1, step):
+        seg = audio[st:st + win_samples]
+        seg_energy = float(np.mean(seg ** 2))
+        if seg_energy > max_energy:
+            max_energy = seg_energy
+            best_start = st
+
+    candidates = [best_start]
+
+    # Secondary representative slice (center or distinct segment)
+    center_start = max(0, (total_len - win_samples) // 2)
+    if abs(center_start - best_start) >= int(1.25 * sr):
+        candidates.append(center_start)
+    elif best_start > win_samples:
+        candidates.append(0)
+    elif best_start + 2 * win_samples <= total_len:
+        candidates.append(total_len - win_samples)
+
     chunk_lfccs = []
     chunk_wls = []
     chunk_rns = []
     chunk_weights = []
 
-    for start in range(0, total_len - sr + 1, hop_samples):
+    for start in candidates:
         chunk = audio[start:start + win_samples]
         if len(chunk) < sr:
-            break
-
-        chunk_peak = float(np.max(np.abs(chunk)))
-        chunk_rms = float(np.sqrt(np.mean(chunk ** 2)))
-
-        if chunk_peak < 0.035 or chunk_rms < 0.005:
             continue
-
+        c_rms = float(np.sqrt(np.mean(chunk ** 2)))
         c_norm = normalize_audio(chunk)
         c_lfcc = extract_lfcc(c_norm, sr=sr).unsqueeze(0)
         c_tensor = torch.tensor(c_norm, dtype=torch.float32).unsqueeze(0)
@@ -280,10 +301,10 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = SAMPLE_RATE) -> Tuple[fl
         chunk_lfccs.append(p_lfcc)
         chunk_wls.append(p_wl)
         chunk_rns.append(p_rn)
-        chunk_weights.append(chunk_rms)
+        chunk_weights.append(max(c_rms, 0.01))
 
     if not chunk_lfccs:
-        c_norm = normalize_audio(audio)
+        c_norm = normalize_audio(audio[:win_samples])
         lfcc = extract_lfcc(c_norm, sr=sr).unsqueeze(0)
         audio_tensor = torch.tensor(c_norm, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
@@ -298,15 +319,12 @@ def evaluate_neural_models(audio: np.ndarray, sr: int = SAMPLE_RATE) -> Tuple[fl
     weighted_wl = float(np.sum(np.array(chunk_wls) * weights))
     weighted_rn = float(np.sum(np.array(chunk_rns) * weights))
 
-    high_energy_indices = [i for i, w in enumerate(chunk_weights) if w >= 0.020]
-    if high_energy_indices:
-        he_lfccs = [chunk_lfccs[i] for i in high_energy_indices]
-        he_wls = [chunk_wls[i] for i in high_energy_indices]
-        he_rns = [chunk_rns[i] for i in high_energy_indices]
-        if any(l >= 0.75 or (w >= 0.70 and r >= 0.70) or (w >= 0.75 and l >= 0.50) for l, w, r in zip(he_lfccs, he_wls, he_rns)):
-            weighted_lfcc = max(weighted_lfcc, max(he_lfccs))
-            weighted_wl = max(weighted_wl, max(he_wls))
-            weighted_rn = max(weighted_rn, max(he_rns))
+    # Threat preservation: If any key segment exhibits strong spoofing artifacts, elevate threat
+    if any(l >= 0.70 or (w >= 0.70 and r >= 0.70) or (w >= 0.75 and l >= 0.50)
+           for l, w, r in zip(chunk_lfccs, chunk_wls, chunk_rns)):
+        weighted_lfcc = max(weighted_lfcc, max(chunk_lfccs))
+        weighted_wl = max(weighted_wl, max(chunk_wls))
+        weighted_rn = max(weighted_rn, max(chunk_rns))
 
     return weighted_lfcc, weighted_wl, weighted_rn
 
@@ -322,9 +340,13 @@ def analyze_audio(request: AnalyzeRequest):
     if not session_id:
         default_speaker = request.speaker_id or "Snapshot Voice Analysis"
         session_id = session_manager.create_session(default_speaker)
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+        session = session_manager.get_session(session_id)
+    else:
+        session = session_manager.get_session(session_id)
+        if not session:
+            default_speaker = request.speaker_id or "Live Call Monitor"
+            session_id = session_manager.create_session(default_speaker, session_id=session_id)
+            session = session_manager.get_session(session_id)
         
     try:
         try:

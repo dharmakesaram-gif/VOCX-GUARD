@@ -92,13 +92,13 @@ class SessionManager:
         oldest_active_id = min(self.sessions.items(), key=lambda item: item[1].last_active_time)[0]
         del self.sessions[oldest_active_id]
 
-    def create_session(self, speaker_id: Optional[str] = None) -> str:
+    def create_session(self, speaker_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
         with self._lock:
-            session_id = str(uuid.uuid4())
+            sid = session_id or str(uuid.uuid4())
             if len(self.sessions) >= self.max_sessions:
                 self._evict_oldest_or_closed_session()
-            self.sessions[session_id] = CallSession(session_id, speaker_id)
-            return session_id
+            self.sessions[sid] = CallSession(sid, speaker_id)
+            return sid
         
     def get_session(self, session_id: str) -> Optional[CallSession]:
         with self._lock:
