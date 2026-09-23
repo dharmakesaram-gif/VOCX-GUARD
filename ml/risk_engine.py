@@ -173,32 +173,37 @@ class RiskEngine:
         # Multi-model threat consensus:
         high_model_votes = sum(1 for p in (lfcc_lcnn_prob, wavlm_prob, rawnet2_prob) if p >= 0.70)
         
-        # Spectral & Biological Reality Guard:
-        # If LFCC-LCNN confirms absence of synthetic vocoder phase anomalies (< 0.12)
-        # AND mucosal biological prosody is verified human (bio < 0.25):
-        # Room reflections/loudspeaker acoustics cannot unilaterally trigger an AI Voice Clone alert!
-        is_spectral_and_bio_human = (lfcc_lcnn_prob < 0.12) and (bio < 0.25)
-        
-        if is_spectral_and_bio_human:
-            # Genuine human speech with ambient/speaker channel reflections:
-            # Bound threat to benign environmental acoustic score
-            threat_score = 0.20 * neural_score + 0.80 * max(lfcc_lcnn_prob, bio)
-            threat_score = min(threat_score, 0.28)
-        elif (lfcc_lcnn_prob >= 0.60 and (wavlm_prob >= 0.60 or rawnet2_prob >= 0.60)) or (neural_score >= 0.50 and high_model_votes >= 2):
-            # True multi-model AI voice clone consensus (e.g. ElevenLabs, Tacotron, VITS)
+        # 1. Biological & Raw-Waveform Human Reality Shield:
+        # If vocal fold dynamics (micro-jitter, shimmer, prosody) confirm a living human (bio < 0.25)
+        # AND raw waveform foundation models detect no synthetic artifacts (wavlm < 0.20 and rawnet2 < 0.25):
+        # The isolated LFCC elevation is a known microphone channel / lossy codec artifact (Opus/WebM/MP3).
+        # Unanimous biological and neural consensus MUST protect genuine human speech from false alarms!
+        if (bio < 0.25) and (wavlm_prob < 0.20) and (rawnet2_prob < 0.25):
+            threat_score = 0.30 * (wavlm_prob + rawnet2_prob) + 0.70 * bio
+            threat_score = min(threat_score, 0.18)
+
+        # 2. Spectral & Biological Reality Guard (LFCC confirms bonafide + bio confirms human):
+        elif (lfcc_lcnn_prob < 0.15) and (bio < 0.25):
+            threat_score = 0.25 * neural_score + 0.75 * max(lfcc_lcnn_prob, bio)
+            threat_score = min(threat_score, 0.20)
+
+        # 3. Multi-Model AI Voice Clone Consensus (e.g. ElevenLabs, Tacotron, VITS):
+        elif (lfcc_lcnn_prob >= 0.60 and (wavlm_prob >= 0.30 or rawnet2_prob >= 0.30 or bio >= 0.30)) or (high_model_votes >= 2):
             threat_score = max(neural_score, 0.85 + 0.15 * (neural_score - 0.50))
-        elif lfcc_lcnn_prob >= 0.75:
-            # Overwhelming spectral evidence of synthetic vocoder / neural TTS (LFCC-LCNN benchmark)
+
+        # 4. Severe Biomechanical Reality Violation (robotic pitch, zero shimmer, extreme aliasing):
+        elif bio >= 0.60 and (neural_score >= 0.30 or lfcc_lcnn_prob >= 0.50):
+            threat_score = max(bio, 0.80)
+
+        # 5. Overwhelming Spectral Evidence Corroborated:
+        elif lfcc_lcnn_prob >= 0.85 and (wavlm_prob >= 0.20 or rawnet2_prob >= 0.20 or bio >= 0.20):
             threat_score = max(lfcc_lcnn_prob * 0.88, 0.75)
-        elif bio >= 0.70 and neural_score >= 0.35:
-            # Physical reality violation confirmed with elevated neural suspicion
-            threat_score = max(bio, 0.75 + 0.20 * (bio - 0.70))
-        elif neural_score < 0.30 and bio < 0.40:
-            # Verified Authentic Human Voice: Both spectral/time neural ensemble and physical biology confirm human
-            threat_score = 0.70 * neural_score + 0.30 * bio
-        else:
-            # Ambiguous / boundary region
+
+        # 6. Standard Consensus Fusion:
+        elif neural_score < 0.30 and bio < 0.35:
             threat_score = 0.65 * neural_score + 0.35 * bio
+        else:
+            threat_score = 0.60 * neural_score + 0.40 * bio
 
         return float(np.clip(threat_score, 0.05, 0.98))
 
