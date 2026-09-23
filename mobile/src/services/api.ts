@@ -1,8 +1,10 @@
 import * as FileSystem from 'expo-file-system';
 
 // Production / Development Backend API Base URL
-// When deploying or running on physical device, set EXPO_PUBLIC_API_URL in .env
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+// Supports seamless auto-failover from local Wi-Fi to public cloud tunnel
+let activeApiBase = process.env.EXPO_PUBLIC_API_URL || 'https://vocxguard-api.loca.lt';
+const FALLBACK_TUNNEL_URL = 'https://vocxguard-api.loca.lt';
+const API_BASE = activeApiBase;
 const TIMEOUT_MS = 5000; // 5 seconds timeout for resilience against Wi-Fi drops or firewall blocks
 
 const HISTORY_FILE = FileSystem.documentDirectory ? `${FileSystem.documentDirectory}vocxguard_history.json` : null;
@@ -261,42 +263,77 @@ function createFallbackAnalysis(sessionId: string, speakerId?: string): AnalyzeR
 }
 
 /**
- * Fetch wrapper with timeout and AbortController
+ * Fetch wrapper with timeout, auto-failover to cloud tunnel, and tunnel reminder bypass
  */
 const fetchWithTimeout = async (
   url: string,
   options: RequestInit = {},
   timeoutMs: number = TIMEOUT_MS
 ): Promise<Response> => {
-  let timer: any;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`Network request timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
+  const headers: Record<string, string> = {
+    'Bypass-Tunnel-Reminder': 'true',
+    ...((options.headers as Record<string, string>) || {}),
+  };
 
-  let controller: AbortController | null = null;
-  if (typeof AbortController !== 'undefined') {
-    controller = new AbortController();
-  }
+  const execute = async (targetUrl: string, ms: number): Promise<Response> => {
+    let timer: any;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Network request timed out after ${ms}ms (${targetUrl})`));
+      }, ms);
+    });
 
-  const fetchPromise = fetch(url, {
-    ...options,
-    signal: controller?.signal,
-  });
+    let controller: AbortController | null = null;
+    if (typeof AbortController !== 'undefined') {
+      controller = new AbortController();
+    }
+
+    const fetchPromise = fetch(targetUrl, {
+      ...options,
+      headers,
+      signal: controller?.signal,
+    });
+
+    try {
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
+      return response as Response;
+    } catch (err: any) {
+      if (controller) {
+        try {
+          controller.abort();
+        } catch {}
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   try {
-    const response = await Promise.race([fetchPromise, timeoutPromise]);
-    return response as Response;
-  } catch (err: any) {
-    if (controller) {
-      try {
-        controller.abort();
-      } catch {}
+    const response = await execute(url, timeoutMs);
+    if (response.ok || response.status < 500) {
+      return response;
     }
-    throw err;
-  } finally {
-    clearTimeout(timer);
+    throw new Error(`HTTP ${response.status}`);
+  } catch (primaryErr) {
+    // If request already targeted cloud tunnel or vercel, rethrow
+    if (url.includes('loca.lt') || url.includes('vercel.app')) {
+      throw primaryErr;
+    }
+
+    // Auto failover from local IP to public cloud tunnel
+    try {
+      const endpoint = url.replace(/^http:\/\/[^/]+/, FALLBACK_TUNNEL_URL);
+      console.warn(`[API] Local connection failed. Auto-failing over to cloud tunnel: ${endpoint}`);
+      const fallbackResp = await execute(endpoint, timeoutMs);
+      if (fallbackResp.ok || fallbackResp.status < 500) {
+        activeApiBase = FALLBACK_TUNNEL_URL;
+        return fallbackResp;
+      }
+      throw new Error(`Fallback HTTP ${fallbackResp.status}`);
+    } catch (fallbackErr) {
+      throw primaryErr;
+    }
   }
 };
 
