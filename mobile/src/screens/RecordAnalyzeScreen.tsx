@@ -59,6 +59,9 @@ export const RecordAnalyzeScreen = () => {
   const [liveLfccScore, setLiveLfccScore] = useState(0.05);
   const [liveRawnetScore, setLiveRawnetScore] = useState(0.05);
   const [liveWavlmScore, setLiveWavlmScore] = useState(0.05);
+  const [liveBioScore, setLiveBioScore] = useState(0.05);
+  const [riskTimeline, setRiskTimeline] = useState<number[]>(Array(20).fill(0.08));
+  const alertSoundRef = useRef<Audio.Sound | null>(null);
 
   // --- ATTACK LATCHING STATE (Persists AI Spoofed Alert across silence & call stops) ---
   const [hasDetectedSpoof, setHasDetectedSpoof] = useState(false);
@@ -278,10 +281,17 @@ export const RecordAnalyzeScreen = () => {
             const wavlmVal = typeof analysis.details?.acoustic_breakdown?.wavlm === 'number'
               ? analysis.details.acoustic_breakdown.wavlm
               : analysis.score;
-
+            
+            const bioVal = typeof analysis.details?.biomechanical?.bio_spoof_prob === 'number'
+              ? analysis.details.biomechanical.bio_spoof_prob
+              : 0.05;
+            
+            setLiveBioScore(bioVal);
             setLiveLfccScore(lfccVal);
             setLiveRawnetScore(rawnetVal);
             setLiveWavlmScore(wavlmVal);
+            
+            setRiskTimeline((prev) => [...prev.slice(1), analysis.score]);
 
             let calculatedScore = analysis.score;
             let calculatedAcoustic = analysis.breakdown.acoustic;
@@ -350,6 +360,11 @@ export const RecordAnalyzeScreen = () => {
             if (chunkVerdict === 'SPOOFED') {
               try {
                 await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error), 150);
+                setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error), 300);
+                if (alertSoundRef.current) {
+                  await alertSoundRef.current.replayAsync();
+                }
               } catch (_) {}
             }
           }
@@ -675,6 +690,24 @@ export const RecordAnalyzeScreen = () => {
         {/* ============================================================== */}
         {activeTab === 'live' && (
           <View style={styles.liveContainer}>
+            {/* Risk Timeline */}
+            <View style={{ marginBottom: 15, padding: 10, backgroundColor: '#111122', borderRadius: 8, borderWidth: 1, borderColor: '#222233' }}>
+              <Text style={{ color: '#8888aa', fontSize: 10, fontWeight: 'bold', marginBottom: 8, letterSpacing: 1 }}>CALL THREAT TIMELINE (LAST 20 CHUNKS)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 40 }}>
+                {riskTimeline.map((risk, idx) => (
+                  <View 
+                    key={idx}
+                    style={{
+                      width: 12,
+                      height: `${Math.max(10, risk * 100)}%`,
+                      backgroundColor: risk >= 0.5 ? '#ff3b3b' : risk >= 0.35 ? '#ffb800' : '#00e676',
+                      borderRadius: 2
+                    }} 
+                  />
+                ))}
+              </View>
+            </View>
+
             {/* Live Monitoring Header Status Bar */}
             <View style={[styles.liveHeaderCard, hasDetectedSpoof && styles.liveHeaderCardAlert]}>
               <View style={styles.liveHeaderLeft}>
@@ -878,8 +911,8 @@ export const RecordAnalyzeScreen = () => {
                   </View>
                   <Text style={styles.alertDesc}>
                     {liveAcousticScore >= 0.70
-                      ? 'Synthetic AI vocoder artifacts detected across neural models (transposed conv phase anomalies).'
-                      : 'Elevated acoustic anomaly detected in caller stream. Possible synthetic clone or voice replay.'}
+                      ? 'CRITICAL THREAT: Highly sophisticated synthetic AI vocoder anomalies detected! TERMINATE CALL IMMEDIATELY!'
+                      : 'HIGH RISK: Elevated acoustic anomaly detected in caller stream. Possible synthetic clone or voice replay.'}
                     {detectedSpoofTime ? ` Intercepted at ${detectedSpoofTime}.` : ''}
                     {!isLiveMonitoring ? ' Call stopped — threat alert locked on screen for verification.' : ''}
                   </Text>
@@ -956,6 +989,27 @@ export const RecordAnalyzeScreen = () => {
                       {
                         width: `${Math.min(100, Math.max(2, liveWavlmScore * 100))}%`,
                         backgroundColor: liveWavlmScore > 0.5 ? theme.colors.danger : '#00e676',
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
+
+              {/* Bio Reality (Vocal Tract Biomechanical) Score */}
+              <View style={styles.telemetryRow}>
+                <View style={styles.telemetryLabelCol}>
+                  <Text style={styles.telemetryLabel}>Bio Reality (Vocal Tract Biomechanical)</Text>
+                  <Text style={[styles.telemetryValue, liveBioScore > 0.5 && { color: '#ff3b3b' }]}>
+                    {(liveBioScore * 100).toFixed(1)}%
+                  </Text>
+                </View>
+                <View style={styles.telemetryTrack}>
+                  <View
+                    style={[
+                      styles.telemetryFill,
+                      {
+                        width: `${Math.min(100, Math.max(2, liveBioScore * 100))}%`,
+                        backgroundColor: liveBioScore > 0.5 ? '#ff3b3b' : '#00e676',
                       },
                     ]}
                   />

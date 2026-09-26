@@ -2,7 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'https://vocxguard-api.loca.lt';
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 
+      (process.env.NODE_ENV === 'production' ? 'https://vocxguard-api.loca.lt' : 'http://127.0.0.1:8000');
     return [
       {
         source: '/api/:path*',

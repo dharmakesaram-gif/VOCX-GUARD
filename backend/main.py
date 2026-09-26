@@ -339,13 +339,13 @@ def analyze_audio(request: AnalyzeRequest):
     session_id = request.session_id
     if not session_id:
         default_speaker = request.speaker_id or "Snapshot Voice Analysis"
-        session_id = session_manager.create_session(default_speaker)
+        session_id = session_manager.create_session(default_speaker, analysis_type="snapshot")
         session = session_manager.get_session(session_id)
     else:
         session = session_manager.get_session(session_id)
         if not session:
             default_speaker = request.speaker_id or "Live Call Monitor"
-            session_id = session_manager.create_session(default_speaker, session_id=session_id)
+            session_id = session_manager.create_session(default_speaker, session_id=session_id, analysis_type="live_call")
             session = session_manager.get_session(session_id)
         
     try:
@@ -437,7 +437,13 @@ def analyze_audio(request: AnalyzeRequest):
             has_target_speaker=has_target_speaker,
         )
         
-        session_manager.update_session(session_id, risk_assessment.fused_score * 100, speaker_id=request.speaker_id)
+        model_breakdown = {
+            'lfcc_lcnn': round(float(lfcc_prob), 4),
+            'wavlm': round(float(wavlm_prob), 4),
+            'rawnet2': round(float(rawnet2_prob), 4),
+            'bio': round(float(bio_metrics.get('bio_spoof_prob', 0)), 4),
+        }
+        session_manager.update_session(session_id, risk_assessment.fused_score * 100, speaker_id=request.speaker_id, model_breakdown=model_breakdown)
         is_spoofed = (risk_assessment.fused_score >= 0.70) or (risk_assessment.acoustic_score >= 0.70)
         
         logger.info(
@@ -507,7 +513,7 @@ async def websocket_endpoint(websocket: WebSocket):
             return
 
     await websocket.accept()
-    session_id = session_manager.create_session()
+    session_id = session_manager.create_session(analysis_type="websocket")
     try:
         await websocket.send_json({"event": "connected", "session_id": session_id})
         while True:
@@ -598,7 +604,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     bio_metrics=bio_metrics,
                     has_target_speaker=has_target_speaker,
                 )
-                session_manager.update_session(session_id, risk_assessment.fused_score * 100)
+                ws_model_breakdown = {
+                    'lfcc_lcnn': round(float(lfcc_prob), 4),
+                    'wavlm': round(float(wavlm_prob), 4),
+                    'rawnet2': round(float(rawnet2_prob), 4),
+                    'bio': round(float(bio_metrics.get('bio_spoof_prob', 0)), 4),
+                }
+                session_manager.update_session(session_id, risk_assessment.fused_score * 100, model_breakdown=ws_model_breakdown)
                 session = session_manager.get_session(session_id)
                 
                 is_spoofed = (risk_assessment.fused_score >= 0.70) or (risk_assessment.acoustic_score >= 0.70)
