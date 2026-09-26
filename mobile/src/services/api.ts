@@ -31,6 +31,9 @@ export interface Session {
   risk_level?: 'LOW' | 'MEDIUM' | 'HIGH';
   chunks_analyzed?: number;
   risk_history?: number[];
+  analysis_type?: string;
+  peak_risk?: number;
+  model_breakdown?: { lfcc_lcnn?: number; wavlm?: number; rawnet2?: number; bio?: number };
 }
 
 export interface AnalyzeResult {

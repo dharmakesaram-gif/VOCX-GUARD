@@ -34,13 +34,16 @@ class AnalyzeResponse(BaseModel):
 class SessionInfo(BaseModel):
     session_id: str
     speaker_id: Optional[str] = None
+    analysis_type: Optional[str] = "live_call"
     status: Optional[str] = "active"
     start_time: str
     last_active_time: Optional[str] = None
     chunks_analyzed: int
     current_risk: float
+    peak_risk: Optional[float] = 0.0
     risk_level: str
     risk_history: List[float]
+    model_breakdown: Optional[Dict[str, Any]] = None
 
 class SessionListResponse(BaseModel):
     sessions: List[SessionInfo]

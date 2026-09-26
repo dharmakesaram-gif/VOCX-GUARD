@@ -4,15 +4,18 @@ import threading
 from typing import List, Dict, Optional
 
 class CallSession:
-    def __init__(self, session_id: str, speaker_id: Optional[str] = None):
+    def __init__(self, session_id: str, speaker_id: Optional[str] = None, analysis_type: str = "live_call"):
         self.session_id: str = session_id
         self.speaker_id: Optional[str] = speaker_id
+        self.analysis_type: str = analysis_type  # "live_call", "snapshot", "desktop_monitor", "websocket"
         now_iso = datetime.datetime.utcnow().isoformat()
         self.start_time: str = now_iso
         self.last_active_time: str = now_iso
         self.risk_history: List[float] = []
         self.chunks_analyzed: int = 0
         self.status: str = "active"
+        self.peak_risk: float = 0.0  # Track highest risk seen in this session
+        self.model_breakdown: Dict = {}  # Last model scores {lfcc, wavlm, rawnet2, bio}
         self._lock = threading.RLock()
     
     def add_risk_score(self, score: float) -> None:
@@ -20,6 +23,7 @@ class CallSession:
         with self._lock:
             self.risk_history.append(score)
             self.chunks_analyzed += 1
+            self.peak_risk = max(self.peak_risk, score)
             self.last_active_time = datetime.datetime.utcnow().isoformat()
 
     def get_current_risk(self) -> float:
@@ -56,13 +60,16 @@ class CallSession:
             return {
                 "session_id": self.session_id,
                 "speaker_id": self.speaker_id or "Anonymous_Caller",
+                "analysis_type": self.analysis_type,
                 "status": self.status,
                 "start_time": self.start_time,
                 "last_active_time": self.last_active_time,
                 "chunks_analyzed": self.chunks_analyzed,
                 "current_risk": self.get_current_risk(),
+                "peak_risk": self.peak_risk,
                 "risk_level": self.get_risk_level(),
-                "risk_history": list(self.risk_history)
+                "risk_history": list(self.risk_history),
+                "model_breakdown": dict(self.model_breakdown)
             }
 
 class SessionManager:
@@ -92,12 +99,12 @@ class SessionManager:
         oldest_active_id = min(self.sessions.items(), key=lambda item: item[1].last_active_time)[0]
         del self.sessions[oldest_active_id]
 
-    def create_session(self, speaker_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
+    def create_session(self, speaker_id: Optional[str] = None, session_id: Optional[str] = None, analysis_type: str = "live_call") -> str:
         with self._lock:
             sid = session_id or str(uuid.uuid4())
             if len(self.sessions) >= self.max_sessions:
                 self._evict_oldest_or_closed_session()
-            self.sessions[sid] = CallSession(sid, speaker_id)
+            self.sessions[sid] = CallSession(sid, speaker_id, analysis_type=analysis_type)
             return sid
         
     def get_session(self, session_id: str) -> Optional[CallSession]:
@@ -110,12 +117,14 @@ class SessionManager:
             sessions.sort(key=lambda s: s.get("last_active_time", s.get("start_time", "")), reverse=True)
             return sessions
         
-    def update_session(self, session_id: str, risk_score: float, speaker_id: Optional[str] = None) -> None:
+    def update_session(self, session_id: str, risk_score: float, speaker_id: Optional[str] = None, model_breakdown: Optional[Dict] = None) -> None:
         with self._lock:
             session = self.sessions.get(session_id)
             if session:
                 if speaker_id and (not session.speaker_id or session.speaker_id == "Anonymous_Caller"):
                     session.speaker_id = speaker_id
+                if model_breakdown:
+                    session.model_breakdown = model_breakdown
                 session.add_risk_score(risk_score)
             
     def close_session(self, session_id: str) -> None:

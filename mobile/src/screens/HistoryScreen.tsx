@@ -114,6 +114,10 @@ export const HistoryScreen = () => {
             speakerId: item.speakerId || item.speaker_id || 'Unknown',
             riskScore: score,
             riskLevel: normalizeRiskLevel(item.riskLevel || item.risk_level),
+            analysis_type: item.analysis_type,
+            peak_risk: item.peak_risk,
+            chunks_analyzed: item.chunks_analyzed,
+            model_breakdown: item.model_breakdown,
           };
         });
 
@@ -181,27 +185,52 @@ export const HistoryScreen = () => {
     const speakerDisplay = item.speakerId || 'Unidentified Speaker';
     const scoreDisplay = formatRiskScore(item.riskScore);
 
-    const isLiveCall =
-      Boolean(item.id && String(item.id).startsWith('call_')) ||
-      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('live call')) ||
-      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('call monitor'));
-    const isSnapshot =
-      Boolean(item.id && String(item.id).startsWith('snap_')) ||
-      Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('snapshot'));
+    const renderAnalysisBadge = () => {
+      const type = item.analysis_type;
+      const isLiveCall = type === 'live_call' ||
+        Boolean(item.id && String(item.id).startsWith('call_')) ||
+        Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('live call')) ||
+        Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('call monitor'));
+      const isSnapshot = type === 'snapshot' ||
+        Boolean(item.id && String(item.id).startsWith('snap_')) ||
+        Boolean(item.speakerId && String(item.speakerId).toLowerCase().includes('snapshot'));
+
+      if (type === 'desktop_monitor') {
+        return (
+          <View style={styles.tagDesktop}>
+            <Text style={styles.tagDesktopText}>🖥️ DESKTOP</Text>
+          </View>
+        );
+      }
+      if (type === 'websocket') {
+        return (
+          <View style={styles.tagWebsocket}>
+            <Text style={styles.tagWebsocketText}>📡 WEBSOCKET</Text>
+          </View>
+        );
+      }
+      if (isLiveCall) {
+        return (
+          <View style={styles.tagLive}>
+            <Text style={styles.tagLiveText}>📞 LIVE CALL</Text>
+          </View>
+        );
+      }
+      if (isSnapshot) {
+        return (
+          <View style={styles.tagSnapshot}>
+            <Text style={styles.tagSnapshotText}>📸 SNAPSHOT</Text>
+          </View>
+        );
+      }
+      return null;
+    };
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
-            {isLiveCall ? (
-              <View style={styles.tagLive}>
-                <Text style={styles.tagLiveText}>LIVE CALL</Text>
-              </View>
-            ) : isSnapshot ? (
-              <View style={styles.tagSnapshot}>
-                <Text style={styles.tagSnapshotText}>SNAPSHOT</Text>
-              </View>
-            ) : null}
+            {renderAnalysisBadge()}
             <Text style={styles.sessionDate}>{dateString}</Text>
           </View>
           <StatusBadge level={validLevel} />
@@ -229,6 +258,56 @@ export const HistoryScreen = () => {
             </Text>
           </View>
         </View>
+        {(item.model_breakdown || item.peak_risk !== undefined || item.chunks_analyzed !== undefined) && (
+          <View style={styles.detailsContainer}>
+            {item.model_breakdown && (
+              <View style={styles.breakdownContainer}>
+                {item.model_breakdown.lfcc_lcnn !== undefined && (
+                  <View style={styles.barRow}>
+                    <Text style={styles.barLabel}>LFCC</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.model_breakdown.lfcc_lcnn * 100}%`, backgroundColor: theme.colors.primary }]} />
+                    </View>
+                  </View>
+                )}
+                {item.model_breakdown.rawnet2 !== undefined && (
+                  <View style={styles.barRow}>
+                    <Text style={styles.barLabel}>RawNet2</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.model_breakdown.rawnet2 * 100}%`, backgroundColor: '#3b82f6' }]} />
+                    </View>
+                  </View>
+                )}
+                {item.model_breakdown.wavlm !== undefined && (
+                  <View style={styles.barRow}>
+                    <Text style={styles.barLabel}>WavLM</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.model_breakdown.wavlm * 100}%`, backgroundColor: '#c084fc' }]} />
+                    </View>
+                  </View>
+                )}
+                {item.model_breakdown.bio !== undefined && (
+                  <View style={styles.barRow}>
+                    <Text style={styles.barLabel}>Bio</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${item.model_breakdown.bio * 100}%`, backgroundColor: theme.colors.success }]} />
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+            {(item.peak_risk !== undefined || item.chunks_analyzed !== undefined) && (
+              <View style={styles.statsContainer}>
+                {item.peak_risk !== undefined && (
+                  <Text style={styles.statText}>Peak Risk: {item.peak_risk.toFixed(1)}%</Text>
+                )}
+                {item.chunks_analyzed !== undefined && (
+                  <Text style={styles.statText}>{item.chunks_analyzed} chunk{item.chunks_analyzed !== 1 ? 's' : ''} analyzed</Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
       </View>
     );
   };
@@ -403,6 +482,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontFamily: 'monospace',
   },
+  tagDesktop: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tagDesktopText: {
+    color: '#3b82f6',
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  tagWebsocket: {
+    backgroundColor: 'rgba(0, 230, 118, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 230, 118, 0.4)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  tagWebsocketText: {
+    color: '#00e676',
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
   sessionDate: {
     color: theme.colors.textSecondary,
     fontSize: theme.fontSizes.sm,
@@ -450,6 +557,46 @@ const styles = StyleSheet.create({
   },
   scoreLow: {
     color: theme.colors.success,
+  },
+  detailsContainer: {
+    marginTop: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  breakdownContainer: {
+    gap: 6,
+    marginBottom: 8,
+  },
+  barRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  barLabel: {
+    width: 50,
+    color: theme.colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  barTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  statText: {
+    color: theme.colors.textSecondary,
+    fontSize: 10,
   },
   emptyContainer: {
     alignItems: 'center',

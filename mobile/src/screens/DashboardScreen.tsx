@@ -310,6 +310,33 @@ export const DashboardScreen = () => {
           </TouchableOpacity>
         </View>
 
+        <View style={styles.callGuardCard}>
+          <View style={styles.callGuardHeader}>
+            <Text style={styles.callGuardTitle}>🛡️ Call Guard</Text>
+            {isConnected ? (
+              <View style={styles.callGuardStatusBadge}>
+                <View style={[styles.statusDot, { backgroundColor: theme.colors.success }]} />
+                <Text style={styles.callGuardStatusText}>Ready</Text>
+              </View>
+            ) : (
+              <View style={styles.callGuardStatusBadge}>
+                <View style={[styles.statusDot, { backgroundColor: theme.colors.warning }]} />
+                <Text style={styles.callGuardStatusText}>Offline</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.callGuardSubtitle}>Real-time AI voice clone detection during calls</Text>
+          <Text style={styles.callGuardInstruction}>Put your call on speakerphone, then tap Start</Text>
+          
+          <TouchableOpacity
+            style={styles.callGuardBtn}
+            onPress={() => navigation.navigate('Analyze')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.callGuardBtnText}>START CALL GUARD</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.alertsSection}>
           <Text style={styles.sectionTitle}>Recent Alerts</Text>
           {alerts.length === 0 ? (
@@ -486,5 +513,66 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontSize: theme.fontSizes.sm,
     textAlign: 'center',
+  },
+  callGuardCard: {
+    backgroundColor: 'rgba(0, 212, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: theme.spacing.xl,
+  },
+  callGuardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  callGuardTitle: {
+    fontSize: theme.fontSizes.xl,
+    fontWeight: 'bold',
+    color: theme.colors.primary,
+  },
+  callGuardStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  callGuardStatusText: {
+    color: theme.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  callGuardSubtitle: {
+    fontSize: theme.fontSizes.md,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  callGuardInstruction: {
+    fontSize: theme.fontSizes.sm,
+    color: theme.colors.textSecondary,
+    marginBottom: 16,
+    fontStyle: 'italic',
+  },
+  callGuardBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  callGuardBtnText: {
+    color: '#000000',
+    fontWeight: 'bold',
+    fontSize: theme.fontSizes.lg,
+    letterSpacing: 1,
   },
 });
